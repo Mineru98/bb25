@@ -1,0 +1,43 @@
+/**
+ * @bb25/core — pure-TypeScript port of the bb25 Rust core.
+ * Zero runtime dependencies; inputs are strings and number[]/Float32Array only.
+ */
+export type { Vector } from "./mathUtils.js";
+export {
+  EPSILON,
+  sigmoid,
+  safeLog,
+  logit,
+  safeProb,
+  clamp,
+  dotProduct,
+  vectorMagnitude,
+  cosineSimilarity,
+  softmax,
+  minMaxNormalize,
+} from "./mathUtils.js";
+
+export { Tokenizer } from "./tokenizer.js";
+export { Corpus } from "./corpus.js";
+export type { Document, CorpusStats } from "./corpus.js";
+export { BM25Scorer } from "./bm25.js";
+export { BayesianBM25Scorer } from "./bayesian.js";
+export { VectorScorer } from "./vector.js";
+export { HybridScorer } from "./hybrid.js";
+
+export {
+  Gating,
+  cosineToProbability,
+  probNot,
+  probAnd,
+  probOr,
+  logOddsConjunction,
+  balancedLogOddsFusion,
+} from "./fusion.js";
+
+export type { Embedder } from "./embedder.js";
+export {
+  buildDefaultCorpus,
+  buildDefaultQueries,
+} from "./defaults.js";
+export type { DefaultQuery } from "./defaults.js";

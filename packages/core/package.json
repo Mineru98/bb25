@@ -1,0 +1,26 @@
+{
+  "name": "@bb25/core",
+  "version": "0.0.0",
+  "description": "Pure-TypeScript core for bb25: tokenizer, BM25, Bayesian BM25, Vector, Hybrid scorers. Zero runtime dependencies.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}
