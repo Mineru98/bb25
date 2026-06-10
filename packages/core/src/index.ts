@@ -14,6 +14,7 @@ export {
   vectorMagnitude,
   cosineSimilarity,
   softmax,
+  softmaxRows,
   minMaxNormalize,
 } from "./mathUtils.js";
 
@@ -41,3 +42,18 @@ export {
   buildDefaultQueries,
 } from "./defaults.js";
 export type { DefaultQuery } from "./defaults.js";
+
+export {
+  expectedCalibrationError,
+  brierScore,
+  reliabilityDiagram,
+  calibrationReport,
+  summarizeCalibration,
+} from "./metrics.js";
+export type { CalibrationReport, ReliabilityBin } from "./metrics.js";
+
+export { ParameterLearner } from "./parameterLearner.js";
+export type { ParameterLearnerResult } from "./parameterLearner.js";
+
+export { ExperimentRunner, runExperiments } from "./experiments.js";
+export type { Query, ExperimentResult } from "./experiments.js";

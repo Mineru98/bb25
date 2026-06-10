@@ -88,6 +88,22 @@ export function softmax(z: number[]): number[] {
   return expZ.map((e) => e / sum);
 }
 
+/** Row-wise softmax over a 2D array stored as a flat slice (each row `nCols`). */
+export function softmaxRows(z: number[], nCols: number): number[] {
+  const nRows = Math.floor(z.length / nCols);
+  const result = new Array<number>(z.length).fill(0.0);
+  for (let r = 0; r < nRows; r++) {
+    const start = r * nCols;
+    const end = start + nCols;
+    const row = z.slice(start, end);
+    const sm = softmax(row);
+    for (let i = 0; i < nCols; i++) {
+      result[start + i] = sm[i]!;
+    }
+  }
+  return result;
+}
+
 /** Min-max normalize to [0, 1]. Returns zeros when the range is negligible. */
 export function minMaxNormalize(values: number[]): number[] {
   if (values.length === 0) {
