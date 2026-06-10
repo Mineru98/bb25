@@ -57,3 +57,11 @@ export type { ParameterLearnerResult } from "./parameterLearner.js";
 
 export { ExperimentRunner, runExperiments } from "./experiments.js";
 export type { Query, ExperimentResult } from "./experiments.js";
+
+export {
+  BayesianProbabilityTransform,
+  TemporalBayesianTransform,
+  TrainingMode,
+} from "./probability.js";
+
+export { PlattCalibrator, IsotonicCalibrator } from "./calibration.js";
