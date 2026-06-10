@@ -147,3 +147,34 @@ export interface GoldenModules3 {
 export const goldenModules3: GoldenModules3 = JSON.parse(
   readFileSync(golden3Path, "utf8"),
 ) as GoldenModules3;
+
+// --- Phase A4 fixtures (FusionDebugger traces) ---
+const golden4Path = resolve(here, "../../../../fixtures/golden_modules4.json");
+
+export interface GoldenModules4 {
+  traceBm25: {
+    likelihood: number;
+    tfPrior: number;
+    normPrior: number;
+    compositePrior: number;
+    logitLikelihood: number;
+    logitPrior: number;
+    posterior: number;
+  };
+  traceBm25BaseRate: { posterior: number; logitBaseRate: number };
+  traceVector: { probability: number; logitProbability: number };
+  traceNot: { complement: number; logitInput: number; logitComplement: number };
+  traceFusion: {
+    logOdds: { meanLogit: number; nAlphaScale: number; scaledLogit: number; fused: number; logits: number[] };
+    logOddsWeighted: { meanLogit: number; scaledLogit: number; fused: number };
+    probAnd: { logProbSum: number; fused: number };
+    probOr: { logComplementSum: number; fused: number };
+    probNot: { fused: number };
+  };
+  traceDocument: { finalA: number; finalB: number };
+  compare: { deltas: { name: string; delta: number }[]; dominant: string };
+}
+
+export const goldenModules4: GoldenModules4 = JSON.parse(
+  readFileSync(golden4Path, "utf8"),
+) as GoldenModules4;

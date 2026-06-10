@@ -70,3 +70,14 @@ export { LearnableLogOddsWeights } from "./learnableWeights.js";
 export { AttentionLogOddsWeights } from "./attentionWeights.js";
 export { MultiHeadAttentionLogOddsWeights } from "./multiHeadAttention.js";
 export { BlockMaxIndex } from "./blockMaxIndex.js";
+
+export { FusionDebugger } from "./debug.js";
+export type {
+  BM25SignalTrace,
+  VectorSignalTrace,
+  NotTrace,
+  FusionTrace,
+  SignalTrace,
+  DocumentTrace,
+  ComparisonResult,
+} from "./debug.js";
