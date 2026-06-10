@@ -1,0 +1,27 @@
+{
+  "name": "@bb25/embeddings",
+  "version": "0.0.0",
+  "description": "BGE-M3 (dense) embedder for bb25 via transformers.js. The only package that depends on the ONNX runtime.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bb25/core": "workspace:*",
+    "@huggingface/transformers": "^4.2.0"
+  }
+}
