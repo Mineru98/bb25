@@ -105,3 +105,45 @@ export interface GoldenModules2 {
 export const goldenModules2: GoldenModules2 = JSON.parse(
   readFileSync(golden2Path, "utf8"),
 ) as GoldenModules2;
+
+// --- Phase A3 fixtures (learnable/attention/multi-head weights + block-max) ---
+const golden3Path = resolve(here, "../../../../fixtures/golden_modules3.json");
+
+export interface GoldenModules3 {
+  learnable: {
+    initWeights: number[];
+    initAveraged: number[];
+    combinePlain: number;
+    combineBaseRate: number;
+    fit: { probs: number[][]; labels: number[]; weights: number[]; combine: number };
+    update: { weights: number[]; averaged: number[] };
+  };
+  attention: {
+    init: { nSignals: number; nQueryFeatures: number; seed: number; weightsMatrix: number[] }[];
+    combineBroadcast: number[];
+    combineFull: number[];
+    combineSingle: number[];
+    combineNormalize: number[];
+    combineBaseRate: number[];
+    fit: { weightsMatrix: number[]; combine: number[] };
+    computeUpperBounds: number[];
+    prune: { surviving: number[]; fused: number[] };
+  };
+  multiHead: {
+    nHeads: number;
+    combineSingle: number[];
+    combineMulti: number[];
+    fitCombine: number[];
+  };
+  blockMaxIndex: {
+    blockSize: number;
+    matrix: number[][];
+    nBlocks: number;
+    blockUpperBound: number[][];
+    bayesianBlockUpperBound00: number;
+  };
+}
+
+export const goldenModules3: GoldenModules3 = JSON.parse(
+  readFileSync(golden3Path, "utf8"),
+) as GoldenModules3;

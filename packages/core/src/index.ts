@@ -65,3 +65,8 @@ export {
 } from "./probability.js";
 
 export { PlattCalibrator, IsotonicCalibrator } from "./calibration.js";
+
+export { LearnableLogOddsWeights } from "./learnableWeights.js";
+export { AttentionLogOddsWeights } from "./attentionWeights.js";
+export { MultiHeadAttentionLogOddsWeights } from "./multiHeadAttention.js";
+export { BlockMaxIndex } from "./blockMaxIndex.js";
