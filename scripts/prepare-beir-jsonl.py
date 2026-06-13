@@ -74,6 +74,12 @@ def text_of(record: object) -> str:
     return " ".join(parts).strip()
 
 
+def doc_field_texts(record: object) -> dict[str, str]:
+    title = str(getattr(record, "title", "") or "")
+    body = str(getattr(record, "text", None) or getattr(record, "body", None) or getattr(record, "abstract", None) or "")
+    return {"title": title, "body": body}
+
+
 def id_of(record: object, kind: str) -> str:
     value = getattr(record, f"{kind}_id", None)
     if value is None:
@@ -158,8 +164,11 @@ def main() -> None:
     doc_rows = []
     for i, doc in enumerate(docs):
         row = {"doc_id": id_of(doc, "doc"), "text": doc_texts[i]}
+        fields = doc_field_texts(doc)
+        row["fields"] = fields
         if tokenizer is not None:
             row["terms"] = tokenizer(doc_texts[i])
+            row["field_terms"] = {field: tokenizer(text) for field, text in fields.items()}
         if doc_embeddings is not None:
             row["embedding"] = doc_embeddings[i]
         doc_rows.append(row)

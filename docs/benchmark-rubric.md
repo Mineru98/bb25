@@ -36,7 +36,7 @@ Current implementation strengths:
   modules are covered by golden fixtures extracted from the earlier Rust/Python
   port.
 - CLI benchmark supports `docs.jsonl`, `queries.jsonl`, `qrels.tsv|jsonl`,
-  optional embeddings, and reports `NDCG@k`, `MAP@k`, and `MRR@k`.
+  optional embeddings, and reports `NDCG@k`, `MAP@k`, `MRR@k`, and `recall@k`.
 - A SQuAD slice smoke benchmark is already recorded at
   `fixtures/bench/squad120-q8-results.txt`.
 
@@ -57,8 +57,7 @@ Critical gaps before claiming reference-equivalent BEIR performance:
 - Embedding mismatch: local CLI defaults to BGE-M3 via transformers.js. The
   reference BEIR benchmark uses `all-MiniLM-L6-v2` via sentence-transformers.
 - Missing reference features: the local port does not yet expose
-  `VectorProbabilityTransform`, `MultiFieldScorer`, `base_rate="auto"` with
-  percentile/mixture/elbow modes, or softplus gating.
+  `VectorProbabilityTransform` or the full VPT row set.
 
 These are not small details. If the current benchmark underperforms the
 reference while any of the above differs, the result is not an apples-to-apples
@@ -345,17 +344,16 @@ To make this repository capable of running the same benchmark:
 1. Add a BM25 method option compatible with the reference Lucene variant.
 2. Add a BEIR tokenizer/pretokenized corpus path. The safest path is to store
    reference-produced tokens in JSONL arrays and bypass local tokenization.
-3. Add `base_rate="auto"` with percentile, mixture, and elbow estimation.
-4. Add `softplus` gating and generalized gating beta CLI exposure.
-5. Add `VectorProbabilityTransform`, `ivfDensityPrior`, and `knnDensityPrior`
+3. Add `softplus` gating and generalized gating beta CLI exposure.
+4. Add `VectorProbabilityTransform`, `ivfDensityPrior`, and `knnDensityPrior`
    before attempting Paper 3/VPT rows.
-6. Add `MultiFieldScorer` before claiming MultiField parity.
-7. Add a BEIR harness that can either call Python `pytrec_eval` or write TREC
+5. Add `MultiFieldScorer` before claiming MultiField parity.
+6. Add a BEIR harness that can either call Python `pytrec_eval` or write TREC
    run files and qrels for external evaluation.
-8. Add embedding cache support and a fixed `all-MiniLM-L6-v2` path for reference
+7. Add embedding cache support and a fixed `all-MiniLM-L6-v2` path for reference
    BEIR runs. BGE-M3 can remain a separate product benchmark, not the reference
    benchmark.
-9. Store benchmark manifests and result JSON with commit SHA, package versions,
+8. Store benchmark manifests and result JSON with commit SHA, package versions,
    dataset checksums, model name, dtype, tokenizer, BM25 method, and evaluator.
 
 Current implementation support added for this migration audit:
@@ -369,13 +367,29 @@ Current implementation support added for this migration audit:
 - Reference baseline rows `dense`, `convex`, and `rrf`; `convex` uses
   per-query min-max normalization of raw BM25 scores and dense cosine scores,
   and `rrf` gives no contribution to signals outside their top-R retrieval set.
+- Bayesian hybrid rows `bayesian_logodds` and `bayesian_logodds_br`.
+  The BR row is emitted when a base rate is configured and is marked as a
+  calibration row in JSON scorer metadata.
+- Gated Bayesian hybrid diagnostic rows `bayesian_gated_relu`,
+  `bayesian_gated_swish`, `bayesian_gated_gelu`,
+  `bayesian_gated_swish_b2`, and `bayesian_gated_softplus`.
+- Split-aware tuned attention rows `bayesian_attention_split`,
+  `bayesian_attn_norm_split`, `bayesian_multihead_split`, and
+  `bayesian_multihead_norm_split`, emitted only with `--fit-split` and
+  accompanied by `attentionSplits` train/eval/head-count metadata.
+- Multi-field Bayesian rows `bayesian_multifield` and
+  `bayesian_multifield_bal` when docs provide `field_terms`.
 - TREC run export via `bb25 bench --trec-run-dir` and a Python
   `pytrec_eval` wrapper in `scripts/evaluate-trec-run.py`.
 - JSON baseline comparison gate in `scripts/check-bench-json.mjs`.
-- Percentile `base_rate="auto"` via `bb25 bench --base-rate auto`, recorded in
-  JSON output as a resolved numeric base rate with method/seed/sample metadata.
+- `base_rate="auto"` via `bb25 bench --base-rate auto`, with percentile,
+  mixture, and elbow estimators recorded in JSON output as a resolved numeric
+  base rate with method/seed/sample metadata.
 - Sparse calibration diagnostics via `bb25 bench --calibration`, reporting ECE
   and Brier separately from ranking metrics.
+- Split-aware batch fit via `bb25 bench --fit-split`, emitted as
+  `bayesian_fitted_split` with train/eval query ids, split seed, train ratio,
+  training pair count, and fitted alpha/beta metadata.
 - BEIR JSONL export and runner scripts:
   `scripts/prepare-beir-jsonl.py` and `scripts/run-beir-jsonl-bench.mjs`.
 
@@ -427,6 +441,9 @@ node scripts/run-beir-jsonl-bench.mjs \
   --bm25-method lucene \
   --base-rate auto \
   --base-rate-method percentile \
+  --fit-split \
+  --fit-train-ratio 0.5 \
+  --fit-split-seed 42 \
   --calibration \
   --cutoffs 10 \
   --out /tmp/bb25-beir-sparse.json
@@ -446,7 +463,11 @@ node scripts/run-beir-jsonl-bench.mjs \
   --datasets scifact \
   --doc-embedding embedding \
   --query-embedding embedding \
+  --doc-fields title,body \
+  --doc-field-terms field_terms \
   --candidate-depth 1000 \
+  --base-rate auto \
+  --base-rate-method percentile \
   --bm25-method lucene \
   --cutoffs 10 \
   --out /tmp/bb25-beir-hybrid.json
@@ -460,6 +481,8 @@ node scripts/run-beir-jsonl-bench.mjs \
   --datasets scifact \
   --doc-embedding embedding \
   --query-embedding embedding \
+  --doc-fields title,body \
+  --doc-field-terms field_terms \
   --candidate-depth 1000 \
   --trec-run-dir /tmp/bb25-beir-runs \
   --trec-run-depth 1000 \

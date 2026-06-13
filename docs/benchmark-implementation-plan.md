@@ -23,8 +23,24 @@ Implemented in this repository:
 - TREC run export via `bb25 bench --trec-run-dir`.
 - `pytrec_eval` wrapper for scorer run files.
 - JSON comparison gate for Python-vs-TS baseline parity.
-- `--base-rate auto` with the percentile estimator for Bayesian sparse rows.
+- `--base-rate auto` with percentile, mixture, and elbow estimators for
+  Bayesian sparse rows.
 - Optional sparse calibration report via `--calibration` with ECE and Brier.
+- Split-aware batch fit via `--fit-split`, emitted as `bayesian_fitted_split`
+  with train/eval query ids and learned alpha/beta metadata.
+- Hybrid Bayesian LogOdds rows: `bayesian_logodds` and, when a base rate is
+  configured, `bayesian_logodds_br`. The BR row is marked as calibration
+  metadata.
+- Gated Bayesian hybrid diagnostic rows: `bayesian_gated_relu`,
+  `bayesian_gated_swish`, `bayesian_gated_gelu`,
+  `bayesian_gated_swish_b2`, and `bayesian_gated_softplus`.
+- Split-aware tuned attention rows behind `--fit-split`:
+  `bayesian_attention_split`, `bayesian_attn_norm_split`,
+  `bayesian_multihead_split`, and `bayesian_multihead_norm_split`, with
+  train/eval query ids, feature set, normalization flag, head count, and
+  training pair count metadata.
+- Multi-field Bayesian rows when field terms are supplied:
+  `bayesian_multifield` and `bayesian_multifield_bal`.
 - SQuAD smoke manifest and table comparison script.
 - BEIR JSONL export and TS runner scripts.
 
@@ -34,14 +50,12 @@ Not yet judgeable against the Python reference:
   `ir_datasets`, `sentence_transformers`, and `snowballstemmer`.
 - The local environment currently lacks `pytrec_eval`; the wrapper exists but
   requires the benchmark Python environment.
-- TS does not yet emit all reference hybrid rows: `Bayesian-LogOdds`,
-  `Bayesian-LogOdds-BR`, normalized attention rows, `MultiField`, and VPT rows
-  are incomplete or missing. The implemented baseline rows are emitted using
-  lowercase CLI names: `bm25`, `dense`, `convex`, and `rrf`.
-- `base_rate="auto"` currently implements the percentile estimator only;
-  mixture and elbow estimators are still pending.
-- Batch fit is not yet split-aware; do not use `bayesian_fitted` as a
-  reference calibration claim until train/test split metadata is implemented.
+- TS does not yet emit all reference hybrid rows: reference all-qrels/CV
+  attention names and VPT rows are incomplete or missing. The implemented
+  baseline rows are emitted using lowercase CLI names: `bm25`, `dense`,
+  `convex`, and `rrf`.
+- The legacy `bayesian_fitted` row remains an all-qrels smoke row. Use
+  `bayesian_fitted_split` for reference calibration claims.
 - Reference Python benchmark outputs are not yet checked into a stable local
   result directory with manifests.
 
@@ -80,6 +94,7 @@ Implementation tasks:
 3. Export shared BEIR inputs for TS.
    - Sparse calibration export uses `--tokenizer split`.
    - Hybrid export uses `--tokenizer snowball`.
+   - Multi-field export writes `field_terms` for `title` and `body`.
    - First parity run should use Python-generated `all-MiniLM-L6-v2`
      embeddings stored in JSONL so TS does not introduce embedding runtime
      variance.
@@ -129,8 +144,7 @@ Implementation tasks:
      NDCG/MAP.
 
 2. Implement `base_rate="auto"`.
-   - Percentile estimator is implemented.
-   - Add mixture and elbow estimators after percentile parity is stable.
+   - Percentile, mixture, and elbow estimators are implemented.
    - Store the chosen estimator in the result manifest.
 
 3. Implement sparse calibration report.
@@ -139,8 +153,10 @@ Implementation tasks:
      rate transforms may not change rank order.
 
 4. Add split-aware batch fit.
-   - Training labels and evaluation labels must be separated.
-   - Manifest must include the train/test query ids or the exact split seed.
+   - Training labels and evaluation labels are separated when `--fit-split`
+     is passed.
+   - JSON output includes train/test query ids, split seed, train ratio,
+     training pair count, and fitted alpha/beta.
 
 Exit criteria:
 
@@ -207,12 +223,15 @@ Reference average NDCG@10:
 Implementation tasks:
 
 1. Add `Bayesian-LogOdds`.
-   - Implement the same logit-space sparse+dense fusion as the Python reference.
-   - Add fixture tests for agreement, disagreement, and extreme probabilities.
+   - The same logit-space sparse+dense fusion as the Python reference is
+     implemented as `bayesian_logodds`.
+   - Tests cover agreement, disagreement, base-rate correction, dense-only
+     fallback, and finite probability bounds.
 
 2. Add `Bayesian-LogOdds-BR`.
-   - Reuse `base_rate="auto"` from Phase 2.
-   - Manifest must mark this as a calibration row, not a zero-shot row.
+   - Reuses `base_rate="auto"` or an explicit numeric base rate from Phase 2.
+   - JSON scorer metadata marks `bayesian_logodds_br` as a calibration row, not
+     a zero-shot row.
 
 3. Stabilize `Bayesian-Balanced`.
    - Use logit-space min-max normalization per query over the union candidates.
@@ -221,16 +240,26 @@ Implementation tasks:
      than `0.50` behind RRF.
 
 4. Add gating rows.
-   - `Bayesian-Gated-ReLU`
-   - `Bayesian-Gated-Swish`
-   - `Bayesian-Gated-GELU`
+   - Implemented as `bayesian_gated_relu`, `bayesian_gated_swish`, and
+     `bayesian_gated_gelu`.
+   - Additional diagnostic rows `bayesian_gated_swish_b2` and
+     `bayesian_gated_softplus` cover the reference generalized Swish beta and
+     softplus gates.
+   - Each row uses the active Bayesian sparse probability, base-rate corrected
+     when `--base-rate` is configured, plus dense cosine mapped to probability.
    - Keep these as diagnostic rows. The reference shows they are not expected to
      beat `Bayesian-Balanced` on average.
 
 5. Add attention rows.
-   - Start with `Bayesian-Attention`.
-   - Then add normalized attention only after train/test leakage rules are
-     explicit.
+   - Split-aware `bayesian_attention_split` is implemented behind
+     `--fit-split`.
+   - Split-aware `bayesian_attn_norm_split` is implemented with seven query
+     features and per-query logit normalization.
+   - Split-aware `bayesian_multihead_split` and
+     `bayesian_multihead_norm_split` are implemented with four heads.
+   - JSON scorer metadata marks these attention rows as `tuned`, and
+     `attentionSplits` records train/eval query ids, head count, and training
+     pair counts so they are not compared as zero-shot improvements.
 
 Exit criteria:
 
@@ -248,10 +277,14 @@ parity.
 Implementation tasks:
 
 1. Add `softplus` gating.
+   - Implemented as the diagnostic row `bayesian_gated_softplus`.
 2. Add `VectorProbabilityTransform`.
 3. Add dense Platt/isotonic calibration rows.
 4. Add `MultiFieldScorer`.
+   - Implemented in core and exported from `@bb25/core`.
 5. Add `Bayesian-MultiField` and `Bayesian-MultiField-Bal`.
+   - Implemented as `bayesian_multifield` and `bayesian_multifield_bal` when
+     `bb25 bench` receives `--doc-fields title,body --doc-field-terms field_terms`.
 6. Add VPT ablations:
    - `Bayesian-Vector-Balanced`
    - `Bayesian-Vector-Softplus`
@@ -314,6 +347,9 @@ node scripts/run-beir-jsonl-bench.mjs \
   --bm25-method lucene \
   --base-rate auto \
   --base-rate-method percentile \
+  --fit-split \
+  --fit-train-ratio 0.5 \
+  --fit-split-seed 42 \
   --calibration \
   --cutoffs 10 \
   --out reference-results/ts/sparse-nfcorpus.json
@@ -327,6 +363,8 @@ node scripts/run-beir-jsonl-bench.mjs \
   --datasets arguana,fiqa,nfcorpus,scidocs,scifact \
   --doc-embedding embedding \
   --query-embedding embedding \
+  --doc-fields title,body \
+  --doc-field-terms field_terms \
   --candidate-depth 1000 \
   --trec-run-dir reference-results/ts/runs \
   --trec-run-depth 1000 \
@@ -356,7 +394,11 @@ node scripts/run-beir-jsonl-bench.mjs \
   --datasets scifact \
   --doc-embedding embedding \
   --query-embedding embedding \
+  --doc-fields title,body \
+  --doc-field-terms field_terms \
   --candidate-depth 1000 \
+  --base-rate auto \
+  --base-rate-method percentile \
   --bm25-method lucene \
   --cutoffs 10 \
   --out reference-results/ts/hybrid-scifact.json

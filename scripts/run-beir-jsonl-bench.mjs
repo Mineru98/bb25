@@ -35,6 +35,8 @@ function runBench(bb25Path, datasetDir, args) {
   ];
 
   if (args["doc-terms"] !== "false") command.push("--doc-terms", args["doc-terms"] ?? "terms");
+  if (args["doc-fields"] !== undefined) command.push("--doc-fields", args["doc-fields"]);
+  if (args["doc-field-terms"] !== undefined) command.push("--doc-field-terms", args["doc-field-terms"]);
   if (args["query-terms"] !== "false") command.push("--query-terms", args["query-terms"] ?? "terms");
   if (args["doc-embedding"] !== undefined) command.push("--doc-embedding", args["doc-embedding"]);
   if (args["query-embedding"] !== undefined) command.push("--query-embedding", args["query-embedding"]);
@@ -43,6 +45,9 @@ function runBench(bb25Path, datasetDir, args) {
   if (args["base-rate-method"] !== undefined) command.push("--base-rate-method", args["base-rate-method"]);
   if (args["base-rate-sample-size"] !== undefined) command.push("--base-rate-sample-size", args["base-rate-sample-size"]);
   if (args["base-rate-seed"] !== undefined) command.push("--base-rate-seed", args["base-rate-seed"]);
+  if (args["fit-split"] !== undefined) command.push("--fit-split");
+  if (args["fit-train-ratio"] !== undefined) command.push("--fit-train-ratio", args["fit-train-ratio"]);
+  if (args["fit-split-seed"] !== undefined) command.push("--fit-split-seed", args["fit-split-seed"]);
   if (args.calibration !== undefined) command.push("--calibration");
   if (args["calibration-bins"] !== undefined) command.push("--calibration-bins", args["calibration-bins"]);
   if (args["trec-run-dir"] !== undefined) command.push("--trec-run-dir", join(args["trec-run-dir"], basename(datasetDir)));
