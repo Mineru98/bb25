@@ -1,9 +1,9 @@
 /**
- * Corpus and Document. Direct port of `src/corpus.rs`.
+ * Corpus and document indexing primitives.
  */
 import { Tokenizer } from "./tokenizer.js";
 
-/** An indexed document. Mirrors the reference `Document` struct. */
+/** An indexed document. */
 export interface Document {
   id: string;
   text: string;

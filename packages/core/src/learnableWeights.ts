@@ -1,6 +1,5 @@
 /**
  * Learnable per-signal reliability weights for log-odds conjunction.
- * Direct port of `src/learnable_weights.rs`.
  *
  * Learns weights that map from the Naive Bayes uniform initialization
  * (w_i = 1/n) to per-signal reliability weights via softmax parameterization.

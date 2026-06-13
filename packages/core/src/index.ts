@@ -1,5 +1,5 @@
 /**
- * @bb25/core — pure-TypeScript port of the bb25 Rust core.
+ * @bb25/core - pure-TypeScript retrieval primitives.
  * Zero runtime dependencies; inputs are strings and number[]/Float32Array only.
  */
 export type { Vector } from "./mathUtils.js";

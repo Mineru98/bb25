@@ -1,5 +1,5 @@
 /**
- * Probabilistic fusion primitives. Direct port of `src/fusion.rs`.
+ * Probabilistic fusion primitives.
  */
 import { logit, minMaxNormalize, safeProb, sigmoid } from "./mathUtils.js";
 

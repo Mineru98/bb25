@@ -1,7 +1,7 @@
 /**
- * HybridScorer. Direct port of `src/hybrid_scorer.rs`.
+ * Hybrid scorer.
  *
- * `scoreAnd` uses log-odds conjunction (NOT the product rule), per §14 Q3:
+ * `scoreAnd` uses log-odds conjunction, not the product rule:
  *   probabilisticAnd(probs) = logOddsConjunction(probs, alpha=0.5, NoGating).
  * `scoreAnd` short-circuits to 0 when both signals are below EPSILON.
  */

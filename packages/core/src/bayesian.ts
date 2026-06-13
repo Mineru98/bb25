@@ -1,10 +1,9 @@
 /**
- * BayesianBM25Scorer. Direct port of `src/bayesian_scorer.rs`.
+ * Bayesian BM25 scorer.
  *
- * NOTE (design doc §14 Q2): `alpha`/`beta` parameterize the sigmoid likelihood,
- * NOT a Beta prior. Defaults are (1.0, 0.5). `posterior()` here does NOT clamp
- * its result with safeProb (unlike `BayesianProbabilityTransform::posterior` in
- * the reference) — that asymmetry is intentional and preserved.
+ * `alpha`/`beta` parameterize the sigmoid likelihood, not a Beta prior.
+ * Defaults are (1.0, 0.5). `posterior()` intentionally leaves clamping to
+ * callers that need it.
  */
 import type { BM25Scorer } from "./bm25.js";
 import type { Document } from "./corpus.js";

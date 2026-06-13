@@ -1,9 +1,9 @@
 /**
- * VectorScorer. Direct port of `src/vector_scorer.rs`.
+ * Vector scorer.
  *
- * Dimension-agnostic (design doc §14 Q4): no dim assertion. `cosineSimilarity`
- * zips to the shorter vector, so query/doc embeddings of mismatched length
- * truncate rather than error — that behavior is preserved.
+ * Dimension-agnostic: no dim assertion. `cosineSimilarity` zips to the shorter
+ * vector, so query/doc embeddings of mismatched length truncate rather than
+ * error.
  */
 import type { Document } from "./corpus.js";
 import { clamp, cosineSimilarity, type Vector } from "./mathUtils.js";

@@ -1,9 +1,9 @@
 /**
- * FusionDebugger. Direct port of `src/debug.rs`.
+ * Fusion debugger.
  *
  * Traces intermediate values through the Bayesian BM25 fusion pipeline. The
- * numeric trace fields follow the reference exactly (golden-tested); the
- * `format*` helpers are faithful text renderings (not numerically golden-tested).
+ * numeric trace fields are golden-tested; the `format*` helpers are text
+ * renderings for diagnostics.
  */
 import { cosineToProbability, probNot } from "./fusion.js";
 import { logit, safeProb, sigmoid } from "./mathUtils.js";
@@ -343,7 +343,7 @@ export class FusionDebugger {
       signalDeltas.push([name, probA - probB]);
     }
 
-    // Dominant signal: largest absolute delta (first max, matching Rust max_by).
+    // Dominant signal: largest absolute delta, first max wins.
     let dominant = "";
     let bestAbs = Number.NEGATIVE_INFINITY;
     for (const [name, delta] of signalDeltas) {
@@ -485,7 +485,7 @@ function signalProbability(trace: DocumentTrace, name: string): number {
   return 0.5; // neutral if signal missing
 }
 
-/** Fixed-decimal formatting helper (mirrors Rust `{:.N}`). */
+/** Fixed-decimal formatting helper. */
 function f(x: number, decimals: number): string {
   return x.toFixed(decimals);
 }

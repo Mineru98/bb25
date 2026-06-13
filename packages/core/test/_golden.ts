@@ -1,6 +1,5 @@
 /**
- * Loads the reference golden fixtures (extracted from the Rust core via
- * `cargo run --example extract_golden`) and provides a numeric-parity helper.
+ * Loads committed golden fixtures and provides a numeric-parity helper.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

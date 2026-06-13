@@ -1,13 +1,13 @@
 /**
- * Bayesian probability transforms. Direct port of `src/probability.rs`.
+ * Bayesian probability transforms.
  *
  * Sigmoid likelihood + composite prior + Bayesian posterior with optional
  * base-rate correction (two-step Bayes update). Supports batch fitting
  * (gradient descent) and online learning (SGD with EMA, Polyak averaging,
  * gradient clipping). Temporal variant applies exponential decay weighting.
  *
- * JS `number` is IEEE-754 f64, identical to Rust `f64`. Every accumulation
- * follows the reference's left-to-right order so results match bit-for-bit.
+ * JS `number` is IEEE-754 f64. Accumulations use a deterministic
+ * left-to-right order.
  */
 
 import { sigmoid, safeProb, clamp } from "./mathUtils.js";
@@ -258,8 +258,8 @@ export class BayesianProbabilityTransform {
 
   /**
    * Reset online learning state after a batch fit (internal helper used by
-   * both `fit` and the temporal wrapper). Mirrors the field resets at the end
-   * of Rust `fit`: training_mode, n_updates, grad EMAs, and Polyak averages.
+   * both `fit` and the temporal wrapper): training mode, update count, grad
+   * EMAs, and Polyak averages.
    */
   resetAfterFit(mode: TrainingMode, alpha: number, beta: number): void {
     this.alpha = alpha;
@@ -669,7 +669,7 @@ export class TemporalBayesianTransform {
       beta = newBeta;
     }
 
-    // Replicate Rust: directly mutate inner state to mirror fit() resets.
+    // Directly mutate inner state to share the same reset path as fit().
     this.transform.resetAfterFit(mode, alpha, beta);
   }
 

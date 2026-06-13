@@ -1,117 +1,76 @@
-# bb25 (Bayesian BM25)
+# bb25
 
-bb25 is a fast, self-contained BM25 + Bayesian calibration implementation with a minimal Python API. It also includes a small reference corpus and experiment suite so you can validate the expected numerical properties.
+TypeScript-native BM25 and Bayesian retrieval toolkit.
 
-> **Original author's implementation**: The paper author (Jaepil Jeong, Cognica) maintains the reference Python implementation at [cognica-io/bayesian-bm25](https://github.com/cognica-io/bayesian-bm25). That library focuses on production-ready score-to-probability conversion with BM25 ranking order preservation, auto parameter estimation, online learning, and log-odds conjunction for hybrid fusion. If you need a drop-in probability transform for an existing search system, use the original. bb25 is a Rust-core experimental validation that prioritizes performance and end-to-end reproducibility of the paper's claims.
+The workspace is a pnpm monorepo with a dependency-free core package, an optional
+embeddings package backed by transformers.js, and a CLI for indexing, searching,
+warmup, and benchmark runs.
 
-## Install
+## Packages
 
-```
-pip install bb25
-```
+| Package | Description |
+| --- | --- |
+| [`@bb25/core`](packages/core) | Tokenizer, Corpus, BM25, Bayesian BM25, vector and hybrid scorers, fusion, metrics, calibration, learnable weights, attention weights, block-max indexing, and experiment helpers. |
+| [`@bb25/embeddings`](packages/embeddings) | BGE-M3 dense embeddings via `@huggingface/transformers`. |
+| [`@bb25/cli`](packages/cli) | `bb25` CLI: `index`, `search`, `warmup`, and `bench`. |
 
-## Quick start
+`@bb25/core` has no runtime dependencies and does not import filesystem,
+transformers.js, or ONNX APIs. It works with strings and numeric vectors only.
 
-### Use the built-in corpus and queries
+## Quick Start
 
-```
-import bb25 as bb
-
-corpus = bb.build_default_corpus()
-docs = corpus.documents()
-queries = bb.build_default_queries()
-
-bm25 = bb.BM25Scorer(corpus, 1.2, 0.75)
-score = bm25.score(queries[0].terms, docs[0])
-print("score0", score)
-```
-
-### Build your own corpus
-
-```
-import bb25 as bb
-
-corpus = bb.Corpus()
-corpus.add_document("d1", "neural networks for ranking", [0.1] * 8)
-corpus.add_document("d2", "bm25 is a strong baseline", [0.2] * 8)
-corpus.build_index()  # must be called before creating scorers
-
-bm25 = bb.BM25Scorer(corpus, 1.2, 0.75)
-print(bm25.idf("bm25"))
+```bash
+corepack enable pnpm
+pnpm install
+pnpm -r build
+pnpm -r test
 ```
 
-### Bayesian calibration + hybrid fusion
+## Library
 
-```
-import bb25 as bb
+```ts
+import {
+  BayesianBM25Scorer,
+  BM25Scorer,
+  Corpus,
+  HybridScorer,
+  VectorScorer,
+} from "@bb25/core";
 
-corpus = bb.build_default_corpus()
-docs = corpus.documents()
-queries = bb.build_default_queries()
+const corpus = new Corpus();
+corpus.addDocument("d1", "machine learning from data", [0.1, 0.2, 0.3]);
+corpus.buildIndex();
 
-bm25 = bb.BM25Scorer(corpus, 1.2, 0.75)
-bayes = bb.BayesianBM25Scorer(bm25, 1.0, 0.5)
-vector = bb.VectorScorer()
-hybrid = bb.HybridScorer(bayes, vector)
+const bm25 = new BM25Scorer(corpus, 1.2, 0.75);
+const bayes = new BayesianBM25Scorer(bm25, 1.0, 0.5);
+const hybrid = new HybridScorer(bayes, new VectorScorer(), 0.5);
 
-q = queries[0]
-prob_or = hybrid.score_or(q.terms, q.embedding, docs[0])
-prob_and = hybrid.score_and(q.terms, q.embedding, docs[0])
-print("OR", prob_or, "AND", prob_and)
-```
-
-## Run the experiments
-
-```
-import bb25 as bb
-
-results = bb.run_experiments()
-print(all(r.passed for r in results))
+const doc = corpus.getDocument("d1")!;
+const p = hybrid.scoreOr(["machine", "learning"], [0.1, 0.2, 0.3], doc);
+console.log(p);
 ```
 
-## Sample script
+## CLI
 
-See `docs/sample_usage.py` for an end-to-end example using BM25, Bayesian calibration, and hybrid fusion.
-
-## Benchmarks (BM25 vs Bayesian)
-
-See `benchmarks/README.md` for a lightweight runner that compares BM25 and Bayesian BM25 on your own corpora.
-
-## English Benchmark (SQuAD, 100 validation queries)
-
-This is where BB25 shines: Bayesian Hybrid beats the classic BM25 Hybrid.
-
-| Method               | NDCG@10       | MRR@10   | Notes                                |
-| -------------------- | ------------ | -------- | ------------------------------------ |
-| **WS (BB25+Dense)**  | **0.9149** | **0.8850** | **SOTA!**                |
-| WS (BM25+Dense)      | 0.9051       | 0.8717   |                                      |
-| RRF (BM25+Dense)     | 0.8874       | 0.8483   | RRF underperforms weighted sum       |
-
-# Conclusion
-
-"Bayesian BM25 (bb25) has demonstrated the potential to outperform classic BM25 in hybrid search."
-
-On the English dataset (SQuAD), combining bb25 with Dense (BGE-M3) achieves higher performance than the BM25 + Dense baseline (+1.0%p NDCG). This suggests the probabilistic score from bb25 blends more smoothly with vector scores (less scale mismatch than a simple weighted sum).
-
-Original paper and implementations:
-
-- **Paper**: [Bayesian BM25: A Probabilistic Framework for Hybrid Text and Vector Search](https://www.researchgate.net/publication/400212695_Bayesian_BM25_A_Probabilistic_Framework_for_Hybrid_Text_and_Vector_Search)
-- **Author's reference implementation (Python)**: [cognica-io/bayesian-bm25](https://github.com/cognica-io/bayesian-bm25)
-- **This implementation (Rust + Python bindings)**: [instructkr/bb25](https://github.com/instructkr/bb25)
-
-## Build from source (Rust)
-
-```
-make build
+```bash
+bb25 index corpus.jsonl -o index.json
+bb25 search "bayesian retrieval" --index index.json --top-k 10
+bb25 bench --docs docs.jsonl --queries queries.jsonl --qrels qrels.tsv --embed
 ```
 
-## PyPI publishing
+`corpus.jsonl` and `docs.jsonl` use one JSON object per line:
 
-Build a wheel with maturin:
-
-```
-python -m pip install maturin
-maturin build --release
+```json
+{"doc_id":"d1","text":"machine learning from data","embedding":[0.1,0.2,0.3]}
 ```
 
-For Pyodide builds, see `docs/pyodide.md`.
+`queries.jsonl` accepts `query_id`, `text`, optional `terms`, and optional
+`embedding`. `qrels` can be TSV (`query_id<TAB>doc_id<TAB>relevance`) or JSONL.
+
+## SQuAD Slice
+
+```bash
+node scripts/prepare-squad.mjs --out /tmp/squad --max-questions 200
+bb25 bench --docs /tmp/squad/docs.jsonl --queries /tmp/squad/queries.jsonl \
+  --qrels /tmp/squad/qrels.tsv --embed --dtype fp32
+```

@@ -1,8 +1,8 @@
 /**
- * Score calibration. Direct port of `src/calibration.rs`.
+ * Score calibration helpers.
  *
- * Replicates the reference's left-to-right accumulation order and every clamp,
- * default, and edge case so results match Rust f64 bit-for-bit.
+ * Uses deterministic left-to-right accumulation order with explicit clamps,
+ * defaults, and edge-case handling.
  */
 
 import { safeProb, sigmoid } from "./mathUtils.js";
@@ -37,7 +37,7 @@ export class PlattCalibrator {
       let gradA = 0.0;
       let gradB = 0.0;
 
-      // Rust: scores.iter().zip(labels.iter()) -> iterates min(len) pairs.
+      // Pair scores and labels up to the shorter input length.
       const m = Math.min(scores.length, labels.length);
       for (let i = 0; i < m; i++) {
         const s = scores[i] as number;

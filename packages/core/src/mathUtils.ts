@@ -1,15 +1,15 @@
 /**
- * Numeric primitives. Direct port of `src/math_utils.rs`.
+ * Numeric primitives.
  *
- * JS `number` is IEEE-754 f64, identical to Rust `f64`. Every accumulation
- * follows the reference's left-to-right order so results match bit-for-bit.
+ * JS `number` is IEEE-754 f64. Accumulations use a deterministic
+ * left-to-right order.
  */
 
 export type Vector = Float32Array | number[];
 
 export const EPSILON = 1e-10;
 
-/** Branchful sigmoid for numerical stability (matches `math_utils::sigmoid`). */
+/** Branchful sigmoid for numerical stability. */
 export function sigmoid(x: number): number {
   if (x >= 0.0) {
     const ez = Math.exp(-x);
@@ -44,7 +44,7 @@ export function clamp(value: number, low: number, high: number): number {
 }
 
 export function dotProduct(a: Vector, b: Vector): number {
-  // Rust: a.iter().zip(b.iter()) -> iterates min(len_a, len_b).
+  // Zip to the shorter vector length.
   const n = Math.min(a.length, b.length);
   let sum = 0.0;
   for (let i = 0; i < n; i++) {

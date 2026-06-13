@@ -1,6 +1,5 @@
 /**
- * Multi-head attention over log-odds signals. Direct port of
- * `src/multi_head_attention.rs`.
+ * Multi-head attention over log-odds signals.
  *
  * Each head independently computes query-dependent attention weights over the
  * same probability signals. The final fused result averages the per-head

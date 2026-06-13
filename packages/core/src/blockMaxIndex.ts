@@ -1,12 +1,11 @@
 /**
  * Block-max index for efficient top-k retrieval with early termination.
- * Direct port of `src/block_max_index.rs`.
  *
  * Stores precomputed block-level maximum scores for each term, enabling safe
  * pruning of document blocks that cannot contribute to the top-k results.
  *
- * JS `number` is IEEE-754 f64, identical to Rust `f64`. Every accumulation
- * follows the reference's left-to-right order so results match bit-for-bit.
+ * JS `number` is IEEE-754 f64. Accumulations use a deterministic
+ * left-to-right order.
  */
 
 import type { BayesianProbabilityTransform } from "./probability.js";
@@ -56,8 +55,8 @@ export class BlockMaxIndex {
         const end = Math.min(start + this.blockSizeValue, this.nDocs);
         let maxVal = Number.NEGATIVE_INFINITY;
         for (let i = start; i < end; i++) {
-          // Rust folds with f64::max, which IGNORES a NaN operand; `>` is false
-          // for NaN so maxVal is left unchanged, replicating that NaN-skip.
+          // `>` is false for NaN, so maxVal is left unchanged and NaN inputs are
+          // skipped.
           const v = termScores[i] as number;
           if (v > maxVal) {
             maxVal = v;

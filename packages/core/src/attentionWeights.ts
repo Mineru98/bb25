@@ -1,19 +1,18 @@
 /**
  * Query-dependent signal weighting via attention (Paper 2, Section 8).
  *
- * Direct port of `src/attention_weights.rs`. Computes per-signal softmax
- * attention weights from query features, then combines probability signals
- * via weighted log-odds conjunction.
+ * Computes per-signal softmax attention weights from query features, then
+ * combines probability signals via weighted log-odds conjunction.
  *
- * JS `number` is IEEE-754 f64, identical to Rust `f64`. Every accumulation
- * follows the reference's left-to-right order so results match bit-for-bit.
+ * JS `number` is IEEE-754 f64. Accumulations use a deterministic
+ * left-to-right order.
  */
 import { Gating, logOddsConjunction } from "./fusion.js";
 import { logit, minMaxNormalize, safeProb, sigmoid, softmaxRows } from "./mathUtils.js";
 
 const MASK64 = (1n << 64n) - 1n;
 
-/** Port of simple_normal_init (LCG + Box-Muller). seed is a non-negative integer. */
+/** Deterministic normal initializer (LCG + Box-Muller). seed is a non-negative integer. */
 function simpleNormalInit(n: number, scale: number, seed: number): number[] {
   let state = (BigInt(seed) + 1n) & MASK64;
   const result: number[] = [];
@@ -94,12 +93,12 @@ export class AttentionLogOddsWeights {
     this.logitBaseRate = logitBr;
   }
 
-  /** Number of probability signals (Rust `n_signals()`). */
+  /** Number of probability signals. */
   nSignals(): number {
     return this.nSignalsVal;
   }
 
-  /** Number of query features (Rust `n_query_features()`). */
+  /** Number of query features. */
   nQueryFeatures(): number {
     return this.nQueryFeaturesVal;
   }

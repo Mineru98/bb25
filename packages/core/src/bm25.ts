@@ -1,5 +1,5 @@
 /**
- * BM25Scorer. Direct port of `src/bm25_scorer.rs`.
+ * BM25 scorer.
  */
 import type { Corpus, Document } from "./corpus.js";
 

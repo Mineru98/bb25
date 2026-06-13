@@ -1,9 +1,8 @@
 /**
- * Ranking-quality benchmark harness. Direct port of the metric + evaluation
- * logic in benchmarks/run_benchmark.py.
+ * Ranking-quality benchmark harness.
  *
  * rankDocs sorts by (-score, docId) — the tie-break is part of the contract and
- * must match the reference exactly. NDCG uses exponential gain (2^rel - 1).
+ * is deterministic. NDCG uses exponential gain (2^rel - 1).
  */
 import {
   BM25Scorer,
@@ -323,7 +322,7 @@ function evaluateRrf(
   return { scorer: "rrf", queries: counted, metrics };
 }
 
-/** Tab-separated table, mirroring run_benchmark.py format_table. */
+/** Tab-separated benchmark table. */
 export function formatTable(results: ScorerResult[], cutoffs: number[]): string {
   const headers = ["scorer", "queries"];
   for (const k of cutoffs) headers.push(`ndcg@${k}`, `map@${k}`, `mrr@${k}`);

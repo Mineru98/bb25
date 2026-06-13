@@ -1,7 +1,7 @@
 /**
- * Tokenizer. Direct port of `src/tokenizer.rs`.
+ * Tokenizer.
  *
- * Behavior (confirmed against the reference, design doc §14 Q1):
+ * Behavior:
  *  - ASCII-only. A token is a maximal run of `[A-Za-z0-9]`.
  *  - `A-Z` is lowercased (ASCII lowercase only); every other character —
  *    whitespace, punctuation, and ANY non-ASCII char (é, 한글, full-width …) —
@@ -9,7 +9,7 @@
  *  - No stopword removal, no stemming.
  *
  * IMPORTANT: JS `String.prototype.toLowerCase()`, `\w`, and `\p{...}` are
- * Unicode-aware and would diverge from the reference. We therefore inspect raw
+ * Unicode-aware and would change the intended behavior. We therefore inspect raw
  * char codes and lowercase only `A-Z`.
  */
 export class Tokenizer {

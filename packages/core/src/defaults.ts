@@ -1,6 +1,6 @@
 /**
- * Default corpus and queries. Direct port of `src/defaults.rs`.
- * Embeddings are 8-dimensional f64 literals (design doc §14 Q4).
+ * Default corpus and queries.
+ * Embeddings are 8-dimensional numeric literals.
  */
 import { Corpus } from "./corpus.js";
 import { Tokenizer } from "./tokenizer.js";

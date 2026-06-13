@@ -1,6 +1,5 @@
 /**
  * Golden-parity tests for the probability transforms.
- * Mirrors `examples/extract_golden_modules2.rs` exactly.
  */
 import { describe, it } from "vitest";
 import { goldenModules2, expectClose } from "./_modules.js";

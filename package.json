@@ -10,8 +10,7 @@
   "scripts": {
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
-    "typecheck": "pnpm -r run typecheck",
-    "golden:extract": "cargo run --quiet --example extract_golden > fixtures/golden.json"
+    "typecheck": "pnpm -r run typecheck"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1,9 +1,9 @@
 /**
- * Logistic parameter learner. Direct port of `src/parameter_learner.rs`.
+ * Logistic parameter learner.
  *
  * Learns `alpha`/`beta` for the calibration `p = sigmoid(alpha * (s - beta))`
- * via gradient descent on cross-entropy. Accumulations follow the reference's
- * left-to-right order so results match Rust bit-for-bit.
+ * via gradient descent on cross-entropy. Accumulations use a deterministic
+ * left-to-right order.
  */
 
 import { sigmoid, EPSILON } from "./mathUtils.js";
@@ -16,10 +16,8 @@ export interface ParameterLearnerResult {
 }
 
 /**
- * Replicates Rust `p.max(EPSILON).min(1.0 - EPSILON)`.
- * `f64::max`/`f64::min` IGNORE a NaN operand (returning the finite one), whereas
- * JS `Math.max`/`Math.min` propagate NaN — so on a divergent (non-finite) GD
- * trajectory the two would differ. Map NaN -> EPSILON to stay faithful.
+ * Clamp probabilities while mapping NaN to EPSILON. This keeps divergent
+ * non-finite gradient descent trajectories deterministic.
  */
 function clampProbability(p: number): number {
   if (Number.isNaN(p)) {
@@ -45,7 +43,7 @@ export class ParameterLearner {
     alpha: number,
     beta: number,
   ): number {
-    // Rust: scores.iter().zip(labels.iter()) -> iterates min(len) pairs.
+    // Pair scores and labels up to the shorter input length.
     const n = scores.length;
     let totalLoss = 0.0;
     const m = Math.min(scores.length, labels.length);

@@ -1,4 +1,4 @@
-/** JSONL loaders (docs / queries / qrels), mirroring benchmarks/run_benchmark.py. */
+/** JSONL loaders for docs, queries, and qrels. */
 import { readFileSync } from "node:fs";
 
 export function* loadJsonl(path: string): Generator<Record<string, unknown>> {

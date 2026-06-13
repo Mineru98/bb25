@@ -1,9 +1,8 @@
 /**
- * Validation harness (exp1..exp13). Direct port of `src/experiments.rs`.
+ * Validation harness (exp1..exp13).
  *
- * The pass/fail predicates and EPSILON comparisons are replicated 1:1. The
- * `details` strings are reasonable summaries (NOT parity-tested). Descending
- * score sorts replicate Rust's `b.partial_cmp(&a).unwrap()` numeric ordering.
+ * The pass/fail predicates and EPSILON comparisons are deterministic. The
+ * `details` strings are summaries and are not part of golden parity checks.
  */
 import { BayesianBM25Scorer } from "./bayesian.js";
 import { BM25Scorer } from "./bm25.js";
@@ -36,7 +35,7 @@ export interface ExperimentResult {
   details: string;
 }
 
-/** Descending numeric sort, replicating Rust `b.partial_cmp(&a).unwrap()`. */
+/** Descending numeric sort. */
 function sortByScoreDesc<T>(items: T[], score: (item: T) => number): T[] {
   return items.slice().sort((a, b) => score(b) - score(a));
 }
@@ -180,7 +179,7 @@ export class ExperimentRunner {
         continue;
       }
 
-      // Rust sort_by_key on tf (ascending), stable sort.
+      // Stable ascending sort by term frequency.
       matchingDocs.sort((a, b) => (a.termFreq.get(term) ?? 0) - (b.termFreq.get(term) ?? 0));
 
       for (let i = 0; i < matchingDocs.length - 1; i++) {
@@ -274,7 +273,7 @@ export class ExperimentRunner {
       this.corpus.df.get(t) ?? 0,
       idfValues.get(t)!,
     ]);
-    // Rust sort_by_key on df (ascending), stable sort.
+    // Stable ascending sort by document frequency.
     dfIdfPairs.sort((a, b) => a[0] - b[0]);
 
     let monotonicOk = true;
@@ -813,7 +812,7 @@ export class ExperimentRunner {
   }
 }
 
-/** Element-wise equality, mirroring Rust `Vec<f64> == Vec<f64>`. */
+/** Element-wise equality for numeric vectors. */
 function vecEq(a: number[], b: number[]): boolean {
   if (a.length !== b.length) {
     return false;

@@ -1,6 +1,5 @@
 /**
- * index.json schema + (de)serialization. This is a NEW format (the reference
- * Rust core has no on-disk index); see docs/ts-migration-design.md §14 Q6.
+ * index.json schema + serialization helpers.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { Corpus } from "@bb25/core";

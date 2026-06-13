@@ -1,8 +1,7 @@
 /**
  * Calibration metrics for evaluating probability quality.
  *
- * Direct port of `src/metrics.rs`. Accumulations follow the reference's
- * left-to-right order so results match Rust bit-for-bit.
+ * Accumulations use a deterministic left-to-right order.
  */
 
 /** A single bin in a reliability diagram: [avgPredicted, avgActual, count]. */
@@ -132,8 +131,8 @@ export function calibrationReport(
 
 /**
  * Formatted text summary of a calibration report.
- * Port of `CalibrationReport::summary` (`src/metrics.rs`): Rust uses `{:>10.4}`
- * (right-aligned, width 10, 4 decimals) and `{:.6}` for ECE/Brier.
+ * Reliability rows are right-aligned to width 10 with 4 decimals; ECE and Brier
+ * use 6 decimals.
  */
 export function summarizeCalibration(report: CalibrationReport): string {
   const lines: string[] = [

@@ -4,7 +4,7 @@ import { ParameterLearner } from "../../src/parameterLearner.js";
 
 describe("ParameterLearner golden parity", () => {
   for (const c of goldenModules.parameterLearner) {
-    it(`learn matches Rust for ${c.name}`, () => {
+    it(`learn matches golden fixture for ${c.name}`, () => {
       const learner = new ParameterLearner(c.lr, c.maxIter, c.tol);
       const result = learner.learn(c.scores, c.labels);
 
@@ -32,7 +32,7 @@ describe("ParameterLearner golden parity", () => {
       }
     });
 
-    it(`crossEntropyLoss matches Rust for ${c.name}`, () => {
+    it(`crossEntropyLoss matches golden fixture for ${c.name}`, () => {
       const learner = new ParameterLearner(c.lr, c.maxIter, c.tol);
       for (let i = 0; i < c.crossEntropy.length; i++) {
         const probe = c.crossEntropy[i]!;
