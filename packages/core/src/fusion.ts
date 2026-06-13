@@ -9,7 +9,8 @@ export type Gating =
   | { kind: "relu" }
   | { kind: "swish" }
   | { kind: "generalizedSwish"; beta: number }
-  | { kind: "gelu" };
+  | { kind: "gelu" }
+  | { kind: "softplus" };
 
 export const Gating = {
   None: { kind: "none" } as Gating,
@@ -17,6 +18,7 @@ export const Gating = {
   Swish: { kind: "swish" } as Gating,
   generalizedSwish: (beta: number): Gating => ({ kind: "generalizedSwish", beta }),
   Gelu: { kind: "gelu" } as Gating,
+  Softplus: { kind: "softplus" } as Gating,
 };
 
 function applyGating(logitVal: number, gating: Gating): number {
@@ -31,6 +33,10 @@ function applyGating(logitVal: number, gating: Gating): number {
       return logitVal * sigmoid(gating.beta * logitVal);
     case "gelu":
       return logitVal * sigmoid(1.702 * logitVal);
+    case "softplus":
+      if (logitVal > 50.0) return logitVal;
+      if (logitVal < -50.0) return Math.exp(logitVal);
+      return Math.log1p(Math.exp(logitVal));
   }
 }
 

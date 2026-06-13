@@ -71,6 +71,8 @@ export { LearnableLogOddsWeights } from "./learnableWeights.js";
 export { AttentionLogOddsWeights } from "./attentionWeights.js";
 export { MultiHeadAttentionLogOddsWeights } from "./multiHeadAttention.js";
 export { BlockMaxIndex } from "./blockMaxIndex.js";
+export { MultiFieldScorer } from "./multiField.js";
+export type { MultiFieldDocument, MultiFieldScorerOptions } from "./multiField.js";
 
 export { FusionDebugger } from "./debug.js";
 export type {

@@ -1,6 +1,6 @@
-import { describe, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { sigmoid, logit } from "../src/mathUtils.js";
-import { cosineToProbability, probOr, probAnd, logOddsConjunction } from "../src/fusion.js";
+import { Gating, cosineToProbability, probOr, probAnd, logOddsConjunction } from "../src/fusion.js";
 import { golden, expectClose } from "./_golden.js";
 
 describe("Math + fusion primitive parity", () => {
@@ -37,5 +37,16 @@ describe("Math + fusion primitive parity", () => {
         `logOddsConjAlpha05(${f.probs})`,
       );
     }
+  });
+
+  it("gated log_odds_conjunction variants stay finite probabilities", () => {
+    const softplus = logOddsConjunction([0.9, 0.1], null, null, Gating.Softplus);
+    const swishB2 = logOddsConjunction([0.9, 0.1], null, null, Gating.generalizedSwish(2.0));
+    expect(Number.isFinite(softplus)).toBe(true);
+    expect(Number.isFinite(swishB2)).toBe(true);
+    expect(softplus).toBeGreaterThan(0);
+    expect(softplus).toBeLessThan(1);
+    expect(swishB2).toBeGreaterThan(0);
+    expect(swishB2).toBeLessThan(1);
   });
 });
