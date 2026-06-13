@@ -3,20 +3,27 @@
  */
 import type { Corpus, Document } from "./corpus.js";
 
+export type BM25Method = "robertson" | "lucene";
+
 export class BM25Scorer {
   private readonly corpus: Corpus;
   private readonly k1: number;
   private readonly b: number;
+  private readonly method: BM25Method;
 
-  constructor(corpus: Corpus, k1 = 1.2, b = 0.75) {
+  constructor(corpus: Corpus, k1 = 1.2, b = 0.75, method: BM25Method = "robertson") {
     this.corpus = corpus;
     this.k1 = k1;
     this.b = b;
+    this.method = method;
   }
 
   idf(term: string): number {
     const n = this.corpus.n;
     const dfT = this.corpus.df.get(term) ?? 0;
+    if (this.method === "lucene") {
+      return Math.log(1.0 + (n - dfT + 0.5) / (dfT + 0.5));
+    }
     return Math.log((n - dfT + 0.5) / (dfT + 0.5));
   }
 

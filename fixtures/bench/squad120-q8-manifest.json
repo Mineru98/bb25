@@ -1,0 +1,47 @@
+{
+  "name": "squad120-q8-smoke",
+  "tier": 1,
+  "dataset": {
+    "source": "SQuAD dev-v1.1",
+    "url": "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v1.1.json",
+    "prepareScript": "scripts/prepare-squad.mjs",
+    "maxQuestions": 120,
+    "perContext": 1
+  },
+  "benchmark": {
+    "command": [
+      "corepack",
+      "pnpm",
+      "--filter",
+      "@bb25/cli",
+      "exec",
+      "bb25",
+      "bench",
+      "--docs",
+      "/tmp/squad/docs.jsonl",
+      "--queries",
+      "/tmp/squad/queries.jsonl",
+      "--qrels",
+      "/tmp/squad/qrels.tsv",
+      "--embed",
+      "--dtype",
+      "q8",
+      "--cutoffs",
+      "5,10"
+    ],
+    "expectedTable": "fixtures/bench/squad120-q8-results.txt",
+    "comparisonScript": "scripts/check-bench-table.mjs"
+  },
+  "tolerance": {
+    "sameRuntimeAbs": 0.005,
+    "regeneratedEmbeddingAbs": 0.015
+  },
+  "ordering": {
+    "metric": "ndcg@10",
+    "descending": ["balanced_fusion", "rrf", "bayesian_fitted", "bayesian", "bm25"]
+  },
+  "notes": [
+    "The expected table predates recall columns; comparison should use common numeric columns.",
+    "Embedding rows are model-cache sensitive and should be treated as manual or scheduled smoke unless vectors are cached."
+  ]
+}

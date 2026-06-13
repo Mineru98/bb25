@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** bb25 CLI: index / search / warmup / bench. */
+import { mkdirSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
   BM25Scorer,
@@ -7,6 +8,7 @@ import {
   VectorScorer,
   HybridScorer,
   Tokenizer,
+  type BM25Method,
 } from "@bb25/core";
 import {
   DEFAULT_PARAMS,
@@ -18,7 +20,16 @@ import {
   type IndexFile,
 } from "./indexFile.js";
 import { loadDocs, loadQueries, loadQrels } from "./jsonl.js";
-import { runBench, formatTable, rankDocs, type BenchQuery } from "./bench.js";
+import {
+  runBenchWithDetails,
+  formatTable,
+  rankDocs,
+  type BaseRateMethod,
+  type BaseRateOption,
+  type BenchQuery,
+  type CalibrationResult,
+  type ScorerRun,
+} from "./bench.js";
 
 const USAGE = `bb25 — Bayesian BM25 CLI
 
@@ -28,7 +39,82 @@ Usage:
   bb25 warmup [--dtype fp32] [--model Xenova/bge-m3]
   bb25 bench --docs <docs.jsonl> --queries <queries.jsonl> --qrels <qrels.tsv|.jsonl>
              [--embed] [--dtype fp32] [--cutoffs 5,10,20,100]
+             [--bm25-method robertson|lucene] [--query-terms terms] [--doc-terms terms] [--json]
+             [--base-rate <number|auto>] [--base-rate-method percentile] [--calibration]
+             [--output-json results.json]
+             [--candidate-depth 1000] [--trec-run-dir runs] [--trec-run-depth 1000]
 `;
+
+function parseBm25Method(value: string | undefined): BM25Method {
+  const method = value ?? "robertson";
+  if (method === "robertson" || method === "lucene") {
+    return method;
+  }
+  throw new Error(`invalid BM25 method '${method}' (robertson|lucene)`);
+}
+
+function parseBaseRate(value: string | undefined): BaseRateOption {
+  if (value === undefined || value === "null" || value === "none") {
+    return null;
+  }
+  if (value === "auto") {
+    return "auto";
+  }
+  const n = Number(value);
+  if (!(n > 0.0 && n < 1.0)) {
+    throw new Error(`base-rate must be in (0, 1), "auto", "none", or "null"; got ${value}`);
+  }
+  return n;
+}
+
+function parseBaseRateMethod(value: string | undefined): BaseRateMethod {
+  const method = value ?? "percentile";
+  if (method === "percentile") {
+    return method;
+  }
+  throw new Error(`invalid base-rate method '${method}' (percentile)`);
+}
+
+function sanitizeRunName(name: string): string {
+  return name.replace(/[^A-Za-z0-9_.-]+/g, "_");
+}
+
+function writeTrecRunFiles(runDir: string, runs: ScorerRun[], maxDepth: number | null): void {
+  mkdirSync(runDir, { recursive: true });
+  const byScorer = new Map<string, ScorerRun[]>();
+  for (const run of runs) {
+    const existing = byScorer.get(run.scorer);
+    if (existing === undefined) {
+      byScorer.set(run.scorer, [run]);
+    } else {
+      existing.push(run);
+    }
+  }
+
+  for (const [scorer, scorerRuns] of byScorer) {
+    const lines: string[] = [];
+    const tag = `bb25-${sanitizeRunName(scorer)}`;
+    for (const run of scorerRuns) {
+      const finiteScores = run.scores.filter(([, score]) => Number.isFinite(score));
+      const ranked = rankDocs(finiteScores);
+      const depth = maxDepth === null ? ranked.length : Math.min(maxDepth, ranked.length);
+      const scoreById = new Map(finiteScores);
+      for (let i = 0; i < depth; i++) {
+        const docId = ranked[i]!;
+        lines.push(`${run.queryId} Q0 ${docId} ${i + 1} ${scoreById.get(docId) ?? 0} ${tag}`);
+      }
+    }
+    writeFileSync(`${runDir}/${sanitizeRunName(scorer)}.trec`, lines.join("\n") + "\n", "utf8");
+  }
+}
+
+function formatCalibrationTable(results: CalibrationResult[]): string {
+  const lines = ["scorer\tsamples\tbins\tece\tbrier"];
+  for (const r of results) {
+    lines.push([r.scorer, String(r.samples), String(r.bins), r.ece.toFixed(6), r.brier.toFixed(6)].join("\t"));
+  }
+  return lines.join("\n");
+}
 
 async function makeEmbedder(dtype: string, model: string): Promise<import("@bb25/embeddings").BgeM3Embedder> {
   const { BgeM3Embedder } = await import("@bb25/embeddings");
@@ -46,8 +132,10 @@ async function cmdIndex(argv: string[]): Promise<void> {
       model: { type: "string", default: "Xenova/bge-m3" },
       k1: { type: "string" },
       b: { type: "string" },
+      "bm25-method": { type: "string", default: "robertson" },
       "id-field": { type: "string", default: "doc_id" },
       "text-field": { type: "string", default: "text" },
+      "terms-field": { type: "string" },
       "embedding-field": { type: "string" },
     },
   });
@@ -61,7 +149,9 @@ async function cmdIndex(argv: string[]): Promise<void> {
     values["id-field"],
     values["text-field"],
     values["embedding-field"] ?? null,
+    values["terms-field"] ?? null,
   );
+  const bm25Method = parseBm25Method(values["bm25-method"]);
 
   let embedder: EmbedderMeta | null = null;
   if (values.embed) {
@@ -75,12 +165,19 @@ async function cmdIndex(argv: string[]): Promise<void> {
   const indexDocs: IndexDoc[] = docs.map((d) => ({
     id: d.docId,
     text: d.text,
+    terms: d.terms,
     embedding: d.embedding.length > 0 ? d.embedding : null,
   }));
 
   // Compute stats via a transient corpus.
   const corpus = new (await import("@bb25/core")).Corpus();
-  for (const d of indexDocs) corpus.addDocument(d.id, d.text, d.embedding ?? []);
+  for (const d of indexDocs) {
+    if (d.terms !== undefined && d.terms !== null) {
+      corpus.addDocumentTokens(d.id, d.text, d.terms, d.embedding ?? []);
+    } else {
+      corpus.addDocument(d.id, d.text, d.embedding ?? []);
+    }
+  }
   corpus.buildIndex();
 
   const index: IndexFile = {
@@ -89,6 +186,7 @@ async function cmdIndex(argv: string[]): Promise<void> {
       ...DEFAULT_PARAMS,
       ...(values.k1 !== undefined ? { k1: Number(values.k1) } : {}),
       ...(values.b !== undefined ? { b: Number(values.b) } : {}),
+      bm25Method,
     },
     embedder,
     documents: indexDocs,
@@ -123,7 +221,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
   const tokenizer = new Tokenizer();
   const terms = tokenizer.tokenize(query);
 
-  const bm25 = new BM25Scorer(corpus, index.params.k1, index.params.b);
+  const bm25 = new BM25Scorer(corpus, index.params.k1, index.params.b, index.params.bm25Method ?? "robertson");
   const bayes = new BayesianBM25Scorer(bm25, index.params.alpha, index.params.beta, index.params.baseRate);
   const vector = new VectorScorer();
   const hybrid = new HybridScorer(bayes, vector, index.params.hybridAlpha);
@@ -187,8 +285,26 @@ async function cmdBench(argv: string[]): Promise<void> {
       dtype: { type: "string", default: "fp32" },
       model: { type: "string", default: "Xenova/bge-m3" },
       cutoffs: { type: "string", default: "5,10,20,100" },
+      k1: { type: "string" },
+      b: { type: "string" },
+      alpha: { type: "string" },
+      beta: { type: "string" },
+      "base-rate": { type: "string" },
+      "base-rate-method": { type: "string", default: "percentile" },
+      "base-rate-sample-size": { type: "string" },
+      "base-rate-seed": { type: "string" },
+      "bm25-method": { type: "string", default: "robertson" },
+      "doc-terms": { type: "string" },
+      "query-terms": { type: "string" },
+      "candidate-depth": { type: "string" },
       "doc-embedding": { type: "string" },
       "query-embedding": { type: "string" },
+      "trec-run-dir": { type: "string" },
+      "trec-run-depth": { type: "string" },
+      calibration: { type: "boolean", default: false },
+      "calibration-bins": { type: "string", default: "10" },
+      json: { type: "boolean", default: false },
+      "output-json": { type: "string" },
     },
   });
   if (values.docs === undefined || values.queries === undefined || values.qrels === undefined) {
@@ -200,8 +316,34 @@ async function cmdBench(argv: string[]): Promise<void> {
     .filter((n) => n > 0)
     .sort((a, b) => a - b);
 
-  const docs = loadDocs(values.docs, "doc_id", "text", values["doc-embedding"] ?? null);
-  const queries = loadQueries(values.queries, "query_id", "text", null, values["query-embedding"] ?? null);
+  const k1 = values.k1 !== undefined ? Number(values.k1) : 1.2;
+  const b = values.b !== undefined ? Number(values.b) : 0.75;
+  const alpha = values.alpha !== undefined ? Number(values.alpha) : 1.0;
+  const beta = values.beta !== undefined ? Number(values.beta) : 0.5;
+  const baseRate = parseBaseRate(values["base-rate"]);
+  const baseRateMethod = parseBaseRateMethod(values["base-rate-method"]);
+  const baseRateSampleSize =
+    values["base-rate-sample-size"] === undefined ? 50 : Number(values["base-rate-sample-size"]);
+  const baseRateSeed = values["base-rate-seed"] === undefined ? 42 : Number(values["base-rate-seed"]);
+  const bm25Method = parseBm25Method(values["bm25-method"]);
+  const candidateDepth = values["candidate-depth"] === undefined ? null : Number(values["candidate-depth"]);
+  const trecRunDepth = values["trec-run-depth"] === undefined ? null : Number(values["trec-run-depth"]);
+  const calibrationBins = values.calibration ? Number(values["calibration-bins"]) : null;
+  if (trecRunDepth !== null && !(trecRunDepth > 0)) {
+    throw new Error(`trec-run-depth must be positive, got ${values["trec-run-depth"]}`);
+  }
+  if (!(baseRateSampleSize > 0)) {
+    throw new Error(`base-rate-sample-size must be positive, got ${values["base-rate-sample-size"]}`);
+  }
+  if (!Number.isInteger(baseRateSeed)) {
+    throw new Error(`base-rate-seed must be an integer, got ${values["base-rate-seed"]}`);
+  }
+  if (calibrationBins !== null && !(calibrationBins > 0)) {
+    throw new Error(`calibration-bins must be positive, got ${values["calibration-bins"]}`);
+  }
+
+  const docs = loadDocs(values.docs, "doc_id", "text", values["doc-embedding"] ?? null, values["doc-terms"] ?? null);
+  const queries = loadQueries(values.queries, "query_id", "text", values["query-terms"] ?? null, values["query-embedding"] ?? null);
   const qrels = loadQrels(values.qrels);
 
   if (values.embed) {
@@ -215,7 +357,13 @@ async function cmdBench(argv: string[]): Promise<void> {
 
   const { Corpus } = await import("@bb25/core");
   const corpus = new Corpus();
-  for (const d of docs) corpus.addDocument(d.docId, d.text, d.embedding);
+  for (const d of docs) {
+    if (d.terms !== null) {
+      corpus.addDocumentTokens(d.docId, d.text, d.terms, d.embedding);
+    } else {
+      corpus.addDocument(d.docId, d.text, d.embedding);
+    }
+  }
   corpus.buildIndex();
 
   const benchQueries: BenchQuery[] = queries.map((q) => ({
@@ -225,9 +373,46 @@ async function cmdBench(argv: string[]): Promise<void> {
     embedding: q.embedding,
   }));
 
-  const results = runBench(corpus, benchQueries, qrels, { cutoffs });
-  process.stdout.write("=== Ranking Metrics ===\n");
-  process.stdout.write(formatTable(results, cutoffs) + "\n");
+  const scorerRuns: ScorerRun[] | undefined = values["trec-run-dir"] === undefined ? undefined : [];
+  const details = runBenchWithDetails(corpus, benchQueries, qrels, {
+    k1,
+    b,
+    alpha,
+    beta,
+    baseRate,
+    baseRateMethod,
+    baseRateSampleSize,
+    baseRateSeed,
+    bm25Method,
+    candidateDepth,
+    cutoffs,
+    calibrationBins,
+    runs: scorerRuns,
+  });
+  if (values["trec-run-dir"] !== undefined) {
+    writeTrecRunFiles(values["trec-run-dir"], scorerRuns ?? [], trecRunDepth);
+  }
+  const payload = {
+    cutoffs,
+    options: details.options,
+    ...(values["trec-run-dir"] !== undefined ? { trecRunDir: values["trec-run-dir"], trecRunDepth } : {}),
+    results: details.results,
+    ...(details.calibration.length > 0 ? { calibration: details.calibration } : {}),
+  };
+  const json = JSON.stringify(payload, null, 2) + "\n";
+  if (values["output-json"] !== undefined) {
+    writeFileSync(values["output-json"], json, "utf8");
+  }
+  if (values.json) {
+    process.stdout.write(json);
+  } else {
+    process.stdout.write("=== Ranking Metrics ===\n");
+    process.stdout.write(formatTable(details.results, cutoffs) + "\n");
+    if (details.calibration.length > 0) {
+      process.stdout.write("\n=== Calibration Metrics ===\n");
+      process.stdout.write(formatCalibrationTable(details.calibration) + "\n");
+    }
+  }
 }
 
 async function main(): Promise<void> {

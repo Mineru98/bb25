@@ -15,6 +15,7 @@ export function* loadJsonl(path: string): Generator<Record<string, unknown>> {
 export interface DocRecord {
   docId: string;
   text: string;
+  terms: string[] | null;
   embedding: number[];
 }
 
@@ -30,14 +31,16 @@ export function loadDocs(
   idField = "doc_id",
   textField = "text",
   embeddingField: string | null = null,
+  termsField: string | null = null,
 ): DocRecord[] {
   const docs: DocRecord[] = [];
   for (const row of loadJsonl(path)) {
+    const terms = readTerms(row, termsField);
     const embedding =
       embeddingField !== null && row[embeddingField] != null
         ? (row[embeddingField] as number[]).map(Number)
         : [];
-    docs.push({ docId: String(row[idField]), text: String(row[textField]), embedding });
+    docs.push({ docId: String(row[idField]), text: String(row[textField]), terms, embedding });
   }
   return docs;
 }
@@ -51,10 +54,7 @@ export function loadQueries(
 ): QueryRecord[] {
   const queries: QueryRecord[] = [];
   for (const row of loadJsonl(path)) {
-    const terms =
-      termsField !== null && row[termsField] != null
-        ? (row[termsField] as unknown[]).map(String)
-        : null;
+    const terms = readTerms(row, termsField);
     const embedding =
       embeddingField !== null && row[embeddingField] != null
         ? (row[embeddingField] as number[]).map(Number)
@@ -67,6 +67,20 @@ export function loadQueries(
     });
   }
   return queries;
+}
+
+function readTerms(row: Record<string, unknown>, termsField: string | null): string[] | null {
+  if (termsField === null || row[termsField] == null) {
+    return null;
+  }
+  const raw = row[termsField];
+  if (Array.isArray(raw)) {
+    return raw.map(String);
+  }
+  return String(raw)
+    .trim()
+    .split(/\s+/)
+    .filter((term) => term.length > 0);
 }
 
 /** qrels: {qid: {docId: relevance}}. Supports .jsonl and TSV/whitespace. */
@@ -99,13 +113,18 @@ export function loadQrels(path: string): Map<string, Map<string, number>> {
     if (parts.length < 3) {
       continue;
     }
+    const relColumn = parts.length >= 4 ? 3 : 2;
+    const rel = Number(parts[relColumn]);
     if (firstLine) {
       firstLine = false;
-      if (Number.isNaN(Number(parts[2]))) {
+      if (Number.isNaN(rel)) {
         continue; // header row
       }
     }
-    add(parts[0] as string, parts[1] as string, Number(parts[2]));
+    if (Number.isNaN(rel)) {
+      throw new Error(`invalid qrels relevance in ${path}: ${line}`);
+    }
+    add(parts[0] as string, parts.length >= 4 ? (parts[2] as string) : (parts[1] as string), rel);
   }
   return qrels;
 }

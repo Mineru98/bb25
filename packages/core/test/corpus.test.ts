@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { Corpus } from "../src/corpus.js";
 import { buildDefaultCorpus } from "../src/defaults.js";
 import { BM25Scorer } from "../src/bm25.js";
 import { golden, expectClose } from "./_golden.js";
@@ -39,5 +40,25 @@ describe("Corpus + index parity", () => {
     for (const [term, idf] of Object.entries(golden.idf)) {
       expectClose(bm25.idf(term), idf, `idf[${term}]`);
     }
+  });
+
+  it("supports Lucene-style positive IDF without changing the default", () => {
+    const robertson = new BM25Scorer(corpus, golden.params.k1, golden.params.b);
+    const lucene = new BM25Scorer(corpus, golden.params.k1, golden.params.b, "lucene");
+    const term = "retrieval";
+    expectClose(robertson.idf(term), golden.idf[term]!, `robertson.idf[${term}]`);
+    expect(lucene.idf(term)).toBeGreaterThan(0);
+  });
+
+  it("can index pretokenized documents without applying the local tokenizer", () => {
+    const pretokenized = new Corpus();
+    pretokenized.addDocumentTokens("d1", "Alpha alpha", ["alpha_stem", "alpha_stem"]);
+    pretokenized.addDocumentTokens("d2", "Beta", ["beta_stem"]);
+    pretokenized.buildIndex();
+
+    expect(pretokenized.getDocument("d1")!.tokens).toEqual(["alpha_stem", "alpha_stem"]);
+    expect(pretokenized.getDocument("d1")!.termFreq.get("alpha_stem")).toBe(2);
+    expect(pretokenized.df.get("alpha_stem")).toBe(1);
+    expect(pretokenized.df.get("alpha")).toBeUndefined();
   });
 });

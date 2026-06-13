@@ -3,10 +3,12 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { Corpus } from "@bb25/core";
+import type { BM25Method } from "@bb25/core";
 
 export interface IndexParams {
   k1: number;
   b: number;
+  bm25Method: BM25Method;
   alpha: number;
   beta: number;
   baseRate: number | null;
@@ -24,6 +26,7 @@ export interface EmbedderMeta {
 export interface IndexDoc {
   id: string;
   text: string;
+  terms?: string[] | null;
   embedding: number[] | null;
 }
 
@@ -38,6 +41,7 @@ export interface IndexFile {
 export const DEFAULT_PARAMS: IndexParams = {
   k1: 1.2,
   b: 0.75,
+  bm25Method: "robertson",
   alpha: 1.0,
   beta: 0.5,
   baseRate: null,
@@ -60,7 +64,11 @@ export function loadIndex(path: string): IndexFile {
 export function corpusFromIndex(index: IndexFile): Corpus {
   const corpus = new Corpus();
   for (const doc of index.documents) {
-    corpus.addDocument(doc.id, doc.text, doc.embedding ?? []);
+    if (doc.terms !== undefined && doc.terms !== null) {
+      corpus.addDocumentTokens(doc.id, doc.text, doc.terms, doc.embedding ?? []);
+    } else {
+      corpus.addDocument(doc.id, doc.text, doc.embedding ?? []);
+    }
   }
   corpus.buildIndex();
   return corpus;

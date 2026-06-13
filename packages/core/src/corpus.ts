@@ -37,6 +37,14 @@ export class Corpus {
 
   addDocument(docId: string, text: string, embedding: number[] = []): void {
     const tokens = this.tokenizer.tokenize(text);
+    this.addDocumentWithTokens(docId, text, tokens, embedding);
+  }
+
+  addDocumentTokens(docId: string, text: string, tokens: string[], embedding: number[] = []): void {
+    this.addDocumentWithTokens(docId, text, tokens.slice(), embedding);
+  }
+
+  private addDocumentWithTokens(docId: string, text: string, tokens: string[], embedding: number[]): void {
     const termFreq = new Map<string, number>();
     for (const token of tokens) {
       termFreq.set(token, (termFreq.get(token) ?? 0) + 1);

@@ -22,6 +22,7 @@ export { Tokenizer } from "./tokenizer.js";
 export { Corpus } from "./corpus.js";
 export type { Document, CorpusStats } from "./corpus.js";
 export { BM25Scorer } from "./bm25.js";
+export type { BM25Method } from "./bm25.js";
 export { BayesianBM25Scorer } from "./bayesian.js";
 export { VectorScorer } from "./vector.js";
 export { HybridScorer } from "./hybrid.js";
