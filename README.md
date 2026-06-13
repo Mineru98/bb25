@@ -6,6 +6,19 @@ The workspace is a pnpm monorepo with a dependency-free core package, an optiona
 embeddings package backed by transformers.js, and a CLI for indexing, searching,
 warmup, and benchmark runs.
 
+## Origin and Credits
+
+bb25 began as a port and experimental validation of the Bayesian BM25 work by
+Jaepil Jeong (Cognica), based on the original Python reference implementation:
+[cognica-io/bayesian-bm25](https://github.com/cognica-io/bayesian-bm25).
+Earlier project history also identifies the Rust + Python bindings
+implementation as [instructkr/bb25](https://github.com/instructkr/bb25).
+
+The project has since been migrated into this TypeScript-native pnpm monorepo,
+but the core Bayesian BM25 ideas, probability calibration approach, and hybrid
+retrieval framing should be credited to the original Bayesian BM25 paper and
+reference implementation, with implementation lineage from instructkr/bb25.
+
 ## Packages
 
 | Package | Description |
