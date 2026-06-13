@@ -24,5 +24,11 @@ __pycache__/
 /.pyodide-xbuildenv-*/
 /.pyodide-venv/
 
+# Node / TypeScript
+node_modules/
+**/dist/
+*.tsbuildinfo
+.pnpm-store/
+
 # OS
 .DS_Store

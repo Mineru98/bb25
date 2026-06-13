@@ -1,0 +1,20 @@
+{
+  "name": "@bb25/cli",
+  "version": "0.0.0",
+  "description": "bb25 command-line interface: index / search / warmup / bench.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "bin": {
+    "bb25": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bb25/core": "workspace:*",
+    "@bb25/embeddings": "workspace:*"
+  }
+}
