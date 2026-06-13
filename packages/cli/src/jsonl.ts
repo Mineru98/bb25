@@ -16,6 +16,7 @@ export interface DocRecord {
   docId: string;
   text: string;
   terms: string[] | null;
+  fields: Record<string, string[]> | null;
   embedding: number[];
 }
 
@@ -32,15 +33,17 @@ export function loadDocs(
   textField = "text",
   embeddingField: string | null = null,
   termsField: string | null = null,
+  fieldTermsField: string | null = null,
 ): DocRecord[] {
   const docs: DocRecord[] = [];
   for (const row of loadJsonl(path)) {
     const terms = readTerms(row, termsField);
+    const fields = readFieldTerms(row, fieldTermsField);
     const embedding =
       embeddingField !== null && row[embeddingField] != null
         ? (row[embeddingField] as number[]).map(Number)
         : [];
-    docs.push({ docId: String(row[idField]), text: String(row[textField]), terms, embedding });
+    docs.push({ docId: String(row[idField]), text: String(row[textField]), terms, fields, embedding });
   }
   return docs;
 }
@@ -73,7 +76,10 @@ function readTerms(row: Record<string, unknown>, termsField: string | null): str
   if (termsField === null || row[termsField] == null) {
     return null;
   }
-  const raw = row[termsField];
+  return readTermValue(row[termsField]);
+}
+
+function readTermValue(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     return raw.map(String);
   }
@@ -81,6 +87,21 @@ function readTerms(row: Record<string, unknown>, termsField: string | null): str
     .trim()
     .split(/\s+/)
     .filter((term) => term.length > 0);
+}
+
+function readFieldTerms(row: Record<string, unknown>, fieldTermsField: string | null): Record<string, string[]> | null {
+  if (fieldTermsField === null || row[fieldTermsField] == null) {
+    return null;
+  }
+  const raw = row[fieldTermsField];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(`field terms field "${fieldTermsField}" must be an object`);
+  }
+  const out: Record<string, string[]> = {};
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    out[field] = readTermValue(value);
+  }
+  return out;
 }
 
 /** qrels: {qid: {docId: relevance}}. Supports .jsonl and TSV/whitespace. */

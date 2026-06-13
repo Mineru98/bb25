@@ -40,7 +40,9 @@ Usage:
   bb25 bench --docs <docs.jsonl> --queries <queries.jsonl> --qrels <qrels.tsv|.jsonl>
              [--embed] [--dtype fp32] [--cutoffs 5,10,20,100]
              [--bm25-method robertson|lucene] [--query-terms terms] [--doc-terms terms] [--json]
-             [--base-rate <number|auto>] [--base-rate-method percentile] [--calibration]
+             [--doc-fields title,body] [--doc-field-terms field_terms]
+             [--base-rate <number|auto>] [--base-rate-method percentile|mixture|elbow] [--calibration]
+             [--fit-split] [--fit-train-ratio 0.5] [--fit-split-seed 42]
              [--output-json results.json]
              [--candidate-depth 1000] [--trec-run-dir runs] [--trec-run-depth 1000]
 `;
@@ -69,14 +71,24 @@ function parseBaseRate(value: string | undefined): BaseRateOption {
 
 function parseBaseRateMethod(value: string | undefined): BaseRateMethod {
   const method = value ?? "percentile";
-  if (method === "percentile") {
+  if (method === "percentile" || method === "mixture" || method === "elbow") {
     return method;
   }
-  throw new Error(`invalid base-rate method '${method}' (percentile)`);
+  throw new Error(`invalid base-rate method '${method}' (percentile|mixture|elbow)`);
 }
 
 function sanitizeRunName(name: string): string {
   return name.replace(/[^A-Za-z0-9_.-]+/g, "_");
+}
+
+function parseCsv(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function writeTrecRunFiles(runDir: string, runs: ScorerRun[], maxDepth: number | null): void {
@@ -293,8 +305,13 @@ async function cmdBench(argv: string[]): Promise<void> {
       "base-rate-method": { type: "string", default: "percentile" },
       "base-rate-sample-size": { type: "string" },
       "base-rate-seed": { type: "string" },
+      "fit-split": { type: "boolean", default: false },
+      "fit-train-ratio": { type: "string", default: "0.5" },
+      "fit-split-seed": { type: "string", default: "42" },
       "bm25-method": { type: "string", default: "robertson" },
       "doc-terms": { type: "string" },
+      "doc-fields": { type: "string" },
+      "doc-field-terms": { type: "string" },
       "query-terms": { type: "string" },
       "candidate-depth": { type: "string" },
       "doc-embedding": { type: "string" },
@@ -325,26 +342,56 @@ async function cmdBench(argv: string[]): Promise<void> {
   const baseRateSampleSize =
     values["base-rate-sample-size"] === undefined ? 50 : Number(values["base-rate-sample-size"]);
   const baseRateSeed = values["base-rate-seed"] === undefined ? 42 : Number(values["base-rate-seed"]);
+  const fitTrainRatio = Number(values["fit-train-ratio"]);
+  const fitSplitSeed = Number(values["fit-split-seed"]);
   const bm25Method = parseBm25Method(values["bm25-method"]);
   const candidateDepth = values["candidate-depth"] === undefined ? null : Number(values["candidate-depth"]);
   const trecRunDepth = values["trec-run-depth"] === undefined ? null : Number(values["trec-run-depth"]);
   const calibrationBins = values.calibration ? Number(values["calibration-bins"]) : null;
-  if (trecRunDepth !== null && !(trecRunDepth > 0)) {
-    throw new Error(`trec-run-depth must be positive, got ${values["trec-run-depth"]}`);
+  const docFields = parseCsv(values["doc-fields"]);
+  if (trecRunDepth !== null && (!(trecRunDepth > 0) || !Number.isInteger(trecRunDepth))) {
+    throw new Error(`trec-run-depth must be a positive integer, got ${values["trec-run-depth"]}`);
   }
-  if (!(baseRateSampleSize > 0)) {
-    throw new Error(`base-rate-sample-size must be positive, got ${values["base-rate-sample-size"]}`);
+  if (!(baseRateSampleSize > 0) || !Number.isInteger(baseRateSampleSize)) {
+    throw new Error(`base-rate-sample-size must be a positive integer, got ${values["base-rate-sample-size"]}`);
   }
   if (!Number.isInteger(baseRateSeed)) {
     throw new Error(`base-rate-seed must be an integer, got ${values["base-rate-seed"]}`);
   }
-  if (calibrationBins !== null && !(calibrationBins > 0)) {
-    throw new Error(`calibration-bins must be positive, got ${values["calibration-bins"]}`);
+  if (!(fitTrainRatio > 0.0 && fitTrainRatio < 1.0)) {
+    throw new Error(`fit-train-ratio must be in (0, 1), got ${values["fit-train-ratio"]}`);
+  }
+  if (!Number.isInteger(fitSplitSeed)) {
+    throw new Error(`fit-split-seed must be an integer, got ${values["fit-split-seed"]}`);
+  }
+  if (calibrationBins !== null && (!(calibrationBins > 0) || !Number.isInteger(calibrationBins))) {
+    throw new Error(`calibration-bins must be a positive integer, got ${values["calibration-bins"]}`);
   }
 
-  const docs = loadDocs(values.docs, "doc_id", "text", values["doc-embedding"] ?? null, values["doc-terms"] ?? null);
+  const docs = loadDocs(
+    values.docs,
+    "doc_id",
+    "text",
+    values["doc-embedding"] ?? null,
+    values["doc-terms"] ?? null,
+    values["doc-field-terms"] ?? null,
+  );
   const queries = loadQueries(values.queries, "query_id", "text", values["query-terms"] ?? null, values["query-embedding"] ?? null);
   const qrels = loadQrels(values.qrels);
+  const multiField =
+    docFields.length === 0
+      ? null
+      : {
+          fields: docFields,
+          docFields: new Map(
+            docs.map((doc) => {
+              if (doc.fields === null) {
+                throw new Error(`doc ${doc.docId} is missing multi-field terms; pass --doc-field-terms`);
+              }
+              return [doc.docId, doc.fields] as const;
+            }),
+          ),
+        };
 
   if (values.embed) {
     const e = await makeEmbedder(values.dtype!, values.model!);
@@ -387,6 +434,8 @@ async function cmdBench(argv: string[]): Promise<void> {
     candidateDepth,
     cutoffs,
     calibrationBins,
+    fitSplit: values["fit-split"] ? { trainRatio: fitTrainRatio, seed: fitSplitSeed } : null,
+    multiField,
     runs: scorerRuns,
   });
   if (values["trec-run-dir"] !== undefined) {
@@ -397,7 +446,10 @@ async function cmdBench(argv: string[]): Promise<void> {
     options: details.options,
     ...(values["trec-run-dir"] !== undefined ? { trecRunDir: values["trec-run-dir"], trecRunDepth } : {}),
     results: details.results,
+    scorers: details.scorers,
     ...(details.calibration.length > 0 ? { calibration: details.calibration } : {}),
+    ...(details.fittedSplit !== null ? { fittedSplit: details.fittedSplit } : {}),
+    ...(details.attentionSplits.length > 0 ? { attentionSplits: details.attentionSplits } : {}),
   };
   const json = JSON.stringify(payload, null, 2) + "\n";
   if (values["output-json"] !== undefined) {

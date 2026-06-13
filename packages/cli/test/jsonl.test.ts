@@ -33,6 +33,21 @@ describe("jsonl loaders", () => {
     expect(queries[0]!.terms).toEqual(["orig"]);
   });
 
+  it("loads multi-field doc terms from an object field", () => {
+    const docsPath = tempFile(
+      "docs.jsonl",
+      JSON.stringify({
+        doc_id: "d1",
+        text: "Title Body",
+        field_terms: { title: ["title"], body: "body text" },
+      }) + "\n",
+    );
+
+    const docs = loadDocs(docsPath, "doc_id", "text", null, null, "field_terms");
+
+    expect(docs[0]!.fields).toEqual({ title: ["title"], body: ["body", "text"] });
+  });
+
   it("loads both three-column and four-column qrels", () => {
     const path = tempFile(
       "qrels.tsv",
