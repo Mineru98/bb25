@@ -83,7 +83,32 @@ bb25 bench --docs docs.jsonl --queries queries.jsonl --qrels qrels.tsv --embed
 ## SQuAD Slice
 
 ```bash
-node scripts/prepare-squad.mjs --out /tmp/squad --max-questions 200
-bb25 bench --docs /tmp/squad/docs.jsonl --queries /tmp/squad/queries.jsonl \
-  --qrels /tmp/squad/qrels.tsv --embed --dtype fp32
+corepack pnpm -r build
+corepack pnpm bench:squad-smoke -- \
+  --regenerated-embeddings \
+  --embedding-cache-dir /tmp/bb25-embedding-cache/bge-m3-q8
+# After the cache is populated, add:
+#   --require-embedding-cache --hash-embedding-cache --embedding-local-only
+```
+
+## Benchmark Gates
+
+```bash
+corepack pnpm bench:synthetic-smoke
+corepack pnpm bench:setup-env -- \
+  --python python3.12 \
+  --venv .venv-bench \
+  --require
+corepack pnpm bench:sparse-parity -- \
+  --python .venv-bench/bin/python \
+  --root /tmp/beir-jsonl-sparse \
+  --reference-ranking reference-results/python/sparse-benchmark.json \
+  --reference-calibration reference-results/python/base-rate.json
+corepack pnpm bench:baseline-parity -- \
+  --python .venv-bench/bin/python \
+  --root /tmp/beir-jsonl \
+  --reference reference-results/python/hybrid-beir.json
+corepack pnpm bench:audit-readiness -- \
+  --profile all \
+  --out reference-results/manifests/readiness-audit.json
 ```

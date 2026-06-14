@@ -9,6 +9,14 @@
   },
   "scripts": {
     "build": "pnpm -r run build",
+    "bench:squad-smoke": "node scripts/run-squad-smoke.mjs",
+    "bench:synthetic-smoke": "node scripts/run-synthetic-smoke.mjs",
+    "bench:baseline-parity": "node scripts/run-baseline-parity.mjs",
+    "bench:calibration-gate": "node scripts/check-calibration-gate.mjs",
+    "bench:sparse-parity": "node scripts/run-sparse-calibration-parity.mjs",
+    "bench:setup-env": "python3 scripts/setup-benchmark-env.py",
+    "bench:prepare-beir": "python3 scripts/prepare-beir-jsonl-suite.py",
+    "bench:audit-readiness": "node scripts/audit-benchmark-readiness.mjs",
     "test": "pnpm -r run test",
     "typecheck": "pnpm -r run typecheck"
   },

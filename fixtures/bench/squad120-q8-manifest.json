@@ -42,6 +42,6 @@
   },
   "notes": [
     "The expected table predates recall columns; comparison should use common numeric columns.",
-    "Embedding rows are model-cache sensitive and should be treated as manual or scheduled smoke unless vectors are cached."
+    "Embedding rows are model-cache sensitive; use run-squad-smoke --embedding-cache-dir with --require-embedding-cache/--hash-embedding-cache for stricter reproducibility."
   ]
 }

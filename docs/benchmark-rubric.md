@@ -40,24 +40,27 @@ Current implementation strengths:
 - A SQuAD slice smoke benchmark is already recorded at
   `fixtures/bench/squad120-q8-results.txt`.
 
-Critical gaps before claiming reference-equivalent BEIR performance:
+Critical controls before claiming reference-equivalent BEIR performance:
 
-- BM25 variant mismatch: the reference hybrid BEIR run uses Lucene BM25 via
-  `bm25s` with Snowball English stemming and stop-word removal. The local
-  `BM25Scorer.idf()` currently uses `log((N-df+0.5)/(df+0.5))`, which can be
-  negative and is not the same as the Lucene-style positive IDF used by the
-  reference benchmark.
-- Tokenization mismatch: the local tokenizer is simple regex tokenization. The
-  sparse calibration scripts use `lower().split()` over `ir_datasets` text,
-  while the hybrid BEIR script uses Snowball English stemming and stop-word
-  removal.
-- Candidate protocol mismatch: the local `runBench()` scores every document.
-  The reference hybrid benchmark retrieves top-1000 from sparse and dense
-  independently, fuses only their union, then evaluates.
-- Embedding mismatch: local CLI defaults to BGE-M3 via transformers.js. The
-  reference BEIR benchmark uses `all-MiniLM-L6-v2` via sentence-transformers.
-- Missing reference features: the local port does not yet expose
-  `VectorProbabilityTransform` or the full VPT row set.
+- BM25 variant: the reference hybrid BEIR run uses Lucene BM25 via `bm25s`;
+  local parity runs must use `--bm25-method lucene`.
+- Tokenization: sparse calibration uses `lower().split()`, while hybrid BEIR
+  uses Snowball English stemming and stop-word removal. Local JSONL exports
+  must choose the matching tokenizer for the benchmark being judged.
+- Candidate protocol: reference hybrid retrieves top-1000 from sparse and
+  dense independently, fuses only their union, then evaluates. Local hybrid
+  runs must use `--candidate-depth 1000`.
+- Embeddings: reference BEIR uses `all-MiniLM-L6-v2` via sentence-transformers.
+  Local parity runs should use embeddings exported by
+  `scripts/prepare-beir-jsonl.py --embed-model all-MiniLM-L6-v2
+  --embed-cache-dir <cache>`, not the default CLI embedder. Once the cache is
+  populated, `--embed-local-files-only` should be used for offline
+  reproducibility checks.
+- Missing reference evidence: cross-validated attention,
+  `VectorProbabilityTransform`, VPT ablation rows, and reference all-qrels
+  attention smoke rows are now exposed under lowercase CLI names, but stored
+  Python reference outputs and manifests are still required before claiming
+  parity.
 
 These are not small details. If the current benchmark underperforms the
 reference while any of the above differs, the result is not an apples-to-apples
@@ -67,11 +70,11 @@ implementation verdict.
 
 | Tier | Status | Intended Cadence | Current Verdict |
 | --- | --- | --- | --- |
-| Tier 0 | Partly implemented | PR CI | Golden fixtures exist; seeded property tests are required. |
-| Tier 1 | Partly implemented | PR/manual smoke | SQuAD result is recorded; manifest and automatic comparison are required. |
-| Tier 2 | Target | PR/nightly | Reference synthetic scripts must be ported or fixture-backed. |
+| Tier 0 | Implemented | PR CI | Golden fixtures and seeded property tests cover fixed parity points plus broad probability/pruning invariants. |
+| Tier 1 | Mostly implemented | PR/manual smoke | SQuAD runner records fixed cache path/local-only mode and can hash cache contents; actual embedding cache population remains runtime-dependent. |
+| Tier 2 | Partly implemented | PR/nightly | Golden fixture-backed synthetic smoke runner exists; direct Python-script parity fixtures are still future work. |
 | Tier 3 | Target | Nightly/manual | Needs BEIR loader, Lucene BM25, protocol-matched tokenizer, and evaluator parity. |
-| Tier 4 | Target | Manual/release | Needs sparse+dense top-1000 union, `all-MiniLM-L6-v2`, embedding cache, and `pytrec_eval` parity. |
+| Tier 4 | Target | Manual/release | Needs stored sparse+dense top-1000 union runs with `all-MiniLM-L6-v2` and `pytrec_eval` parity; export cache paths are now manifest-backed. |
 | Tier 5 | Target | Release audit | Run only after Tier 0-4 are stable. |
 
 Only Tier 0 and the non-embedding portion of Tier 1 should block normal pull
@@ -95,8 +98,9 @@ Current local coverage:
 
 - Golden fixtures already cover deterministic math/scoring/probability module
   parity.
-- Seeded property tests are still required to catch broad monotonicity,
-  round-trip, and upper-bound failures outside the fixed fixture points.
+- Seeded property tests cover broad monotonicity, round-trip, composite-prior,
+  fusion identity, WAND, and block-max upper-bound failures outside the fixed
+  fixture points.
 
 Required checks:
 
@@ -130,9 +134,15 @@ Datasets:
 Current status:
 
 - The recorded SQuAD table is a useful smoke target but is not yet a fully
-  reproducible gate until a manifest, fixed CLI options, and automatic
-  comparison script exist.
-- Embedding rows must record model, dtype, runtime, and embedding cache identity.
+  reproducible gate unless it is run through `scripts/run-squad-smoke.mjs`,
+  which records the manifest, fixed CLI options, command logs, input hashes,
+  output hash, table comparison result, model, dtype, runtime, and relevant
+  cache environment variables.
+- `bb25 bench --embed` accepts `--cache-dir` and `--local-only`, and the SQuAD
+  smoke runner forwards these through `--embedding-cache-dir` and
+  `--embedding-local-only`. `--require-embedding-cache` validates that the cache
+  exists before running; `--hash-embedding-cache` records a content hash for
+  stricter identity checks.
 
 Current recorded SQuAD 120-query q8 result:
 
@@ -161,7 +171,9 @@ Pass criteria:
 Purpose: cover reference benchmark modules that require no external IR corpus.
 
 Selected scripts from the Python reference. These scripts are not present in
-this repository today; they are port targets or fixture-generation sources.
+this repository today; they are port targets or fixture-generation sources. The
+current local gate is fixture-backed through `scripts/run-synthetic-smoke.mjs`
+and targeted core module tests.
 
 - `benchmarks/weighted_fusion.py`
 - `benchmarks/learnable_weights.py`
@@ -243,7 +255,8 @@ Required protocol:
   fuse the union candidates, evaluate at `k=10`.
 - Evaluator: `pytrec_eval` semantics for `ndcg_cut_10`, `map_cut_10`,
   `recall_10`.
-- Cache embeddings by dataset/model to make repeat runs comparable.
+- Cache embeddings by dataset/model with `--embed-cache-dir`; record the cache
+  path and local-only mode in the export manifest.
 
 BEIR harness target methods:
 
@@ -294,7 +307,7 @@ Training and leakage taxonomy:
   with fixed parameters and no qrels-derived calibration.
 - Calibration rows: rows using `base_rate="auto"`, Platt/isotonic fitting, or
   batch fit must record the qrels split used to estimate parameters.
-- Tuned rows: attention normalization, cross-validation, dense Platt, and any
+- Tuned rows: attention normalization, cross-validation, and any
   dataset-specific parameter search are not comparable to zero-shot rows unless
   train/test separation is explicit in the manifest.
 
@@ -347,12 +360,15 @@ To make this repository capable of running the same benchmark:
 3. Add `softplus` gating and generalized gating beta CLI exposure.
 4. Add `VectorProbabilityTransform`, `ivfDensityPrior`, and `knnDensityPrior`
    before attempting Paper 3/VPT rows.
+   - Implemented in core and exported from `@bb25/core`.
 5. Add `MultiFieldScorer` before claiming MultiField parity.
 6. Add a BEIR harness that can either call Python `pytrec_eval` or write TREC
    run files and qrels for external evaluation.
 7. Add embedding cache support and a fixed `all-MiniLM-L6-v2` path for reference
-   BEIR runs. BGE-M3 can remain a separate product benchmark, not the reference
-   benchmark.
+   BEIR runs. Implemented in `prepare-beir-jsonl.py` and
+   `prepare-beir-jsonl-suite.py` via `--embed-cache-dir` and
+   `--embed-local-files-only`; stored reference runs are still required. BGE-M3
+   can remain a separate product benchmark, not the reference benchmark.
 8. Store benchmark manifests and result JSON with commit SHA, package versions,
    dataset checksums, model name, dtype, tokenizer, BM25 method, and evaluator.
 
@@ -374,24 +390,110 @@ Current implementation support added for this migration audit:
   `bayesian_gated_swish`, `bayesian_gated_gelu`,
   `bayesian_gated_swish_b2`, and `bayesian_gated_softplus`.
 - Split-aware tuned attention rows `bayesian_attention_split`,
-  `bayesian_attn_norm_split`, `bayesian_multihead_split`, and
-  `bayesian_multihead_norm_split`, emitted only with `--fit-split` and
-  accompanied by `attentionSplits` train/eval/head-count metadata.
+  `bayesian_attn_norm_split`, `bayesian_attn_norm_cv`,
+  `bayesian_multihead_split`, and `bayesian_multihead_norm_split`, emitted only
+  with `--fit-split` and accompanied by `attentionSplits`
+  train/eval/head-count metadata. The CV row also records fold-level
+  train/eval query ids.
+- Reference all-qrels attention smoke rows `bayesian_attention`,
+  `bayesian_attn_norm`, `bayesian_multihead`, and
+  `bayesian_multihead_norm`, accompanied by `attentionSplits`
+  `protocol="all-qrels"` metadata.
+- Split-aware dense calibration rows `dense_platt_split` and
+  `dense_isotonic_split`, emitted only with `--fit-split` and accompanied by
+  `denseCalibrationSplits` train/eval/training-pair metadata.
+- Core vector calibration support via `VectorProbabilityTransform`,
+  `ivfDensityPrior`, and `knnDensityPrior`.
+- VPT ablation rows `bayesian_vector_balanced`,
+  `bayesian_vector_softplus`, and split-aware tuned
+  `bayesian_vector_attn_split`.
 - Multi-field Bayesian rows `bayesian_multifield` and
   `bayesian_multifield_bal` when docs provide `field_terms`.
 - TREC run export via `bb25 bench --trec-run-dir` and a Python
   `pytrec_eval` wrapper in `scripts/evaluate-trec-run.py`.
-- JSON baseline comparison gate in `scripts/check-bench-json.mjs`.
+- Reproducibility manifests from `scripts/run-beir-jsonl-bench.mjs` and
+  `scripts/evaluate-trec-run.py` via `--manifest-out`, including command
+  records with explicit return codes.
+- One-command Tier 1 SQuAD smoke runner
+  `scripts/run-squad-smoke.mjs`, exposed as `pnpm bench:squad-smoke`, with
+  embedding cache preflight and cache-tree manifest support.
+- Fixture-backed Tier 2 synthetic smoke runner
+  `scripts/run-synthetic-smoke.mjs`, exposed as `pnpm bench:synthetic-smoke`.
+- Python benchmark environment manifest writer
+  `scripts/write-benchmark-env-manifest.py`, recording Python/platform,
+  package import/version status, pip freeze, and git state.
+- Python benchmark environment setup runner `scripts/setup-benchmark-env.py`,
+  exposed as `pnpm bench:setup-env`, to create the benchmark venv, install
+  `requirements-bench.txt`, and record setup command logs plus env/freeze
+  manifests.
+- Python reference benchmark runner `scripts/run-reference-benchmarks.py`,
+  recording sparse/base-rate/hybrid reference commands, local/reference git
+  state, command logs, environment manifest, and output hashes.
+- Python reference sparse/base-rate results for NFCorpus and SciFact and full
+  hybrid BEIR reference results for ArguAna, FIQA, NFCorpus, SCIDOCS, and
+  SciFact are stored under `reference-results/python/`.
+- `bb25 bench --metric-style python-reference` matches the Python sparse
+  benchmark helper semantics: linear top-k NDCG, AP averaged over retrieved
+  relevant hits, and stable corpus-order tie handling. The default remains
+  pytrec-oriented.
+- In `python-reference` mode, sparse Bayesian scoring follows the Python
+  reference protocol: full-query BM25 score, unique query/document term-overlap
+  count as the prior `tf`, all nonzero probabilities for calibration with
+  unjudged documents treated as negative, and Python batch-fit hyperparameters.
+- `BM25Scorer(..., method="lucene")` uses the same score scale as `bm25s`
+  Lucene BM25, which matters for BM25-to-probability calibration even when raw
+  ranking is unchanged by a constant score factor.
+- JSON baseline comparison gate in `scripts/check-bench-json.mjs`, including
+  required dataset checks, row-level failure classification, result JSON, and
+  manifest output. It also compares calibration rows such as ECE/Brier with
+  unit-scale tolerances via `--metric ece|brier`.
+- Baseline parity orchestration in `scripts/run-baseline-parity.mjs`, exposed
+  as `pnpm bench:baseline-parity`, to run fresh TS BEIR, pytrec judgment, and
+  JSON parity check in one command.
+- `bb25 bench --scorers` and the baseline-only fast path keep full BEIR baseline
+  parity focused on `bm25`, `dense`, `convex`, and `rrf`, reusing per-query
+  sparse/dense scores instead of running all diagnostic Bayesian rows.
+- JSONL loading is streaming/chunked, avoiding single-string limits on large
+  exported BEIR files such as FIQA docs with embedded vectors.
+- Benchmark readiness audit in `scripts/audit-benchmark-readiness.mjs`, exposed
+  as `pnpm bench:audit-readiness`, to verify required result JSON, manifests,
+  command records with return codes, dataset coverage, Python dependency
+  status, baseline parity before claiming Phase 1 complete, and sparse
+  calibration parity artifacts with `--profile sparse` or `--profile all`.
 - `base_rate="auto"` via `bb25 bench --base-rate auto`, with percentile,
   mixture, and elbow estimators recorded in JSON output as a resolved numeric
   base rate with method/seed/sample metadata.
 - Sparse calibration diagnostics via `bb25 bench --calibration`, reporting ECE
   and Brier separately from ranking metrics.
+- `bayesian_no_base_rate` is emitted when a base rate is configured, giving the
+  sparse calibration gate a same-run baseline for ECE/Brier reduction checks.
+- Sparse calibration gate `scripts/check-calibration-gate.mjs`, exposed as
+  `pnpm bench:calibration-gate`, verifies minimum ECE/Brier reduction and fitted
+  maximum thresholds.
+- Sparse calibration parity runner
+  `scripts/run-sparse-calibration-parity.mjs`, exposed as
+  `pnpm bench:sparse-parity`, runs the Phase 2 TS sparse benchmark, NDCG/MAP
+  parity checks, ECE/Brier parity checks, the calibration reduction gate, and a
+  runner manifest in one command.
 - Split-aware batch fit via `bb25 bench --fit-split`, emitted as
   `bayesian_fitted_split` with train/eval query ids, split seed, train ratio,
   training pair count, and fitted alpha/beta metadata.
+- Sparse parity writes NumPy `default_rng(seed).shuffle` query split files and
+  feeds them to `bb25 bench --fit-split-file`, so split-aware fitted rows use
+  the same train/eval query ids as the Python sparse reference.
+- Current stored sparse parity passes Raw BM25 average NDCG/MAP, zero-shot
+  Bayesian average NDCG/MAP, split-fitted Bayesian average NDCG/MAP, sparse
+  ECE/Brier parity, and the calibration reduction/fitted-ECE gate.
+- Current stored hybrid baseline parity passes `BM25`, `Dense`, `Convex`, and
+  `RRF` average NDCG@10 within `0.50` points against the Python reference using
+  `pytrec_eval` over the five BEIR datasets.
 - BEIR JSONL export and runner scripts:
-  `scripts/prepare-beir-jsonl.py` and `scripts/run-beir-jsonl-bench.mjs`.
+  `scripts/prepare-beir-jsonl.py`, `scripts/prepare-beir-jsonl-suite.py`, and
+  `scripts/run-beir-jsonl-bench.mjs`; export manifests include
+  tokenizer/model settings, Python/package versions, command logs, and file
+  hashes. Short BEIR dataset names resolve to the registered `ir_datasets`
+  identifiers, using explicit split ids where available, such as
+  `beir/nfcorpus/test`, and unsplit ids where required, such as `beir/arguana`.
 
 ## Recommended Commands
 
@@ -400,63 +502,58 @@ Fast local smoke:
 ```bash
 corepack pnpm -r build
 corepack pnpm -r test
-node scripts/prepare-squad.mjs --out /tmp/squad --max-questions 120
-corepack pnpm --filter @bb25/cli exec bb25 bench \
-  --docs /tmp/squad/docs.jsonl \
-  --queries /tmp/squad/queries.jsonl \
-  --qrels /tmp/squad/qrels.tsv \
-  --embed --dtype q8 --cutoffs 5,10
+corepack pnpm bench:squad-smoke -- \
+  --regenerated-embeddings \
+  --embedding-cache-dir /tmp/bb25-embedding-cache/bge-m3-q8 \
+  --require-embedding-cache \
+  --hash-embedding-cache
+corepack pnpm bench:synthetic-smoke
 ```
 
-Reference Python sparse calibration:
+Reference Python sparse calibration and BEIR hybrid:
 
 ```bash
-python benchmarks/benchmark.py -o /tmp/bayesian-bm25-sparse.json
-python benchmarks/base_rate.py -o /tmp/bayesian-bm25-base-rate.json
-```
-
-Reference Python BEIR hybrid:
-
-```bash
-python benchmarks/hybrid_beir.py \
-  -d /tmp/beir \
+corepack pnpm bench:setup-env -- \
+  --python python3.12 \
+  --venv .venv-bench \
+  --require
+. .venv-bench/bin/activate
+python scripts/run-reference-benchmarks.py \
+  --reference-repo /tmp/cognica-bayesian-bm25 \
+  --beir-dir /tmp/beir \
   --download \
   --datasets arguana fiqa nfcorpus scidocs scifact \
   --model all-MiniLM-L6-v2 \
-  -R 1000 -k 10 \
-  -o /tmp/bayesian-bm25-beir-hybrid.json
+  --retrieve-k 1000 \
+  --top-k 10 \
+  --require-env
 ```
 
 TypeScript sparse BEIR harness after exporting JSONL:
 
 ```bash
-python scripts/prepare-beir-jsonl.py \
-  --dataset nfcorpus \
-  --out /tmp/beir/nfcorpus \
-  --tokenizer split
-corepack pnpm --filter @bb25/cli build
-node scripts/run-beir-jsonl-bench.mjs \
-  --root /tmp/beir \
-  --datasets nfcorpus \
-  --bm25-method lucene \
-  --base-rate auto \
-  --base-rate-method percentile \
-  --fit-split \
-  --fit-train-ratio 0.5 \
-  --fit-split-seed 42 \
-  --calibration \
-  --cutoffs 10 \
-  --out /tmp/bb25-beir-sparse.json
+corepack pnpm bench:prepare-beir -- \
+  --out-root /tmp/beir-sparse \
+  --datasets nfcorpus scifact \
+  --tokenizer split \
+  --manifest-out /tmp/bb25-beir-sparse-export-manifest.json
+corepack pnpm bench:sparse-parity -- \
+  --root /tmp/beir-sparse \
+  --datasets nfcorpus,scifact \
+  --reference-ranking reference-results/python/sparse-benchmark.json \
+  --reference-calibration reference-results/python/base-rate.json
 ```
 
 TypeScript hybrid BEIR harness after exporting embeddings:
 
 ```bash
-python scripts/prepare-beir-jsonl.py \
-  --dataset scifact \
-  --out /tmp/beir/scifact \
+corepack pnpm bench:prepare-beir -- \
+  --out-root /tmp/beir \
+  --datasets arguana fiqa nfcorpus scidocs scifact \
   --tokenizer snowball \
-  --embed-model all-MiniLM-L6-v2
+  --embed-model all-MiniLM-L6-v2 \
+  --embed-cache-dir /tmp/bb25-embedding-cache/all-MiniLM-L6-v2 \
+  --manifest-out /tmp/bb25-beir-hybrid-export-manifest.json
 corepack pnpm --filter @bb25/cli build
 node scripts/run-beir-jsonl-bench.mjs \
   --root /tmp/beir \
@@ -470,44 +567,28 @@ node scripts/run-beir-jsonl-bench.mjs \
   --base-rate-method percentile \
   --bm25-method lucene \
   --cutoffs 10 \
-  --out /tmp/bb25-beir-hybrid.json
-```
-
-Export TREC runs and judge with `pytrec_eval`:
-
-```bash
-node scripts/run-beir-jsonl-bench.mjs \
-  --root /tmp/beir \
-  --datasets scifact \
-  --doc-embedding embedding \
-  --query-embedding embedding \
-  --doc-fields title,body \
-  --doc-field-terms field_terms \
-  --candidate-depth 1000 \
-  --trec-run-dir /tmp/bb25-beir-runs \
-  --trec-run-depth 1000 \
-  --bm25-method lucene \
-  --cutoffs 10 \
-  --out /tmp/bb25-beir-hybrid-internal.json
-
-python scripts/evaluate-trec-run.py \
-  --root /tmp/beir \
-  --datasets scifact \
-  --runs /tmp/bb25-beir-runs \
-  --cutoffs 10 \
-  --out /tmp/bb25-beir-hybrid-pytrec.json
+  --out /tmp/bb25-beir-hybrid.json \
+  --manifest-out /tmp/bb25-beir-hybrid-manifest.json
 ```
 
 Compare baseline parity against the stored Python reference:
 
 ```bash
-node scripts/check-bench-json.mjs \
+corepack pnpm bench:baseline-parity -- \
+  --python .venv-bench/bin/python \
+  --root /tmp/beir \
   --reference reference-results/python/hybrid-beir.json \
-  --actual /tmp/bb25-beir-hybrid-pytrec.json \
+  --datasets arguana,fiqa,nfcorpus,scidocs,scifact \
   --methods BM25,Dense,Convex,RRF \
   --metric ndcg@10 \
   --tolerance-points 0.50
+
+corepack pnpm bench:audit-readiness -- \
+  --profile all \
+  --root reference-results \
+  --out reference-results/manifests/readiness-audit.json
 ```
 
-When the TypeScript BEIR harness exists, its output should be compared against
-the Python output row-by-row before any new model or dataset is introduced.
+Keep the stored manifests with the reported results; a green score without the
+matching command records, input hashes, and dependency manifests is not a valid
+parity claim.
