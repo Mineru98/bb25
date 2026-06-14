@@ -21,6 +21,8 @@ export interface EmbedderMeta {
   dtype: string;
   pooling: string;
   normalize: boolean;
+  cacheDir?: string;
+  localOnly?: boolean;
 }
 
 export interface IndexDoc {

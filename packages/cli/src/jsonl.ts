@@ -1,9 +1,34 @@
 /** JSONL loaders for docs, queries, and qrels. */
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+
+function* loadTextLines(path: string): Generator<string> {
+  const fd = openSync(path, "r");
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let carry = "";
+  try {
+    for (;;) {
+      const bytes = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytes === 0) break;
+      const chunk = carry + decoder.write(buffer.subarray(0, bytes));
+      const lines = chunk.split("\n");
+      carry = lines.pop() ?? "";
+      for (const line of lines) {
+        yield line;
+      }
+    }
+    const tail = carry + decoder.end();
+    if (tail.length > 0) {
+      yield tail;
+    }
+  } finally {
+    closeSync(fd);
+  }
+}
 
 export function* loadJsonl(path: string): Generator<Record<string, unknown>> {
-  const content = readFileSync(path, "utf8");
-  for (const rawLine of content.split("\n")) {
+  for (const rawLine of loadTextLines(path)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) {
       continue;
@@ -123,9 +148,8 @@ export function loadQrels(path: string): Map<string, Map<string, number>> {
     return qrels;
   }
 
-  const content = readFileSync(path, "utf8");
   let firstLine = true;
-  for (const rawLine of content.split("\n")) {
+  for (const rawLine of loadTextLines(path)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) {
       continue;

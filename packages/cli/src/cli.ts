@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** bb25 CLI: index / search / warmup / bench. */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
   BM25Scorer,
@@ -26,23 +26,30 @@ import {
   rankDocs,
   type BaseRateMethod,
   type BaseRateOption,
+  type BayesianParameterOption,
   type BenchQuery,
   type CalibrationResult,
+  type FitSplitOptions,
+  type MetricStyle,
   type ScorerRun,
 } from "./bench.js";
 
 const USAGE = `bb25 — Bayesian BM25 CLI
 
 Usage:
-  bb25 index <corpus.jsonl> -o <index.json> [--embed] [--dtype fp32] [--model Xenova/bge-m3]
-  bb25 search "<query>" --index <index.json> [--top-k 10] [--mode or|and|bm25|bayesian] [--embed]
-  bb25 warmup [--dtype fp32] [--model Xenova/bge-m3]
+  bb25 index <corpus.jsonl> -o <index.json> [--embed] [--dtype fp32] [--model Xenova/bge-m3] [--cache-dir <dir>] [--local-only]
+  bb25 search "<query>" --index <index.json> [--top-k 10] [--mode or|and|bm25|bayesian] [--embed] [--cache-dir <dir>] [--local-only]
+  bb25 warmup [--dtype fp32] [--model Xenova/bge-m3] [--cache-dir <dir>] [--local-only]
   bb25 bench --docs <docs.jsonl> --queries <queries.jsonl> --qrels <qrels.tsv|.jsonl>
-             [--embed] [--dtype fp32] [--cutoffs 5,10,20,100]
+             [--embed] [--dtype fp32] [--model Xenova/bge-m3] [--cache-dir <dir>] [--local-only]
+             [--cutoffs 5,10,20,100]
+             [--scorers bm25,dense,convex,rrf]
              [--bm25-method robertson|lucene] [--query-terms terms] [--doc-terms terms] [--json]
+             [--metric-style pytrec|python-reference]
              [--doc-fields title,body] [--doc-field-terms field_terms]
+             [--alpha <number|auto>] [--beta <number|auto>]
              [--base-rate <number|auto>] [--base-rate-method percentile|mixture|elbow] [--calibration]
-             [--fit-split] [--fit-train-ratio 0.5] [--fit-split-seed 42]
+             [--fit-split] [--fit-train-ratio 0.5] [--fit-split-seed 42] [--fit-split-file split.json]
              [--output-json results.json]
              [--candidate-depth 1000] [--trec-run-dir runs] [--trec-run-depth 1000]
 `;
@@ -77,6 +84,28 @@ function parseBaseRateMethod(value: string | undefined): BaseRateMethod {
   throw new Error(`invalid base-rate method '${method}' (percentile|mixture|elbow)`);
 }
 
+function parseBayesianParameter(name: "alpha" | "beta", value: string | undefined, fallback: number): BayesianParameterOption {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (value === "auto") {
+    return "auto";
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`${name} must be a finite number or "auto"; got ${value}`);
+  }
+  return n;
+}
+
+function parseMetricStyle(value: string | undefined): MetricStyle {
+  const style = value ?? "pytrec";
+  if (style === "pytrec" || style === "python-reference") {
+    return style;
+  }
+  throw new Error(`invalid metric style '${style}' (pytrec|python-reference)`);
+}
+
 function sanitizeRunName(name: string): string {
   return name.replace(/[^A-Za-z0-9_.-]+/g, "_");
 }
@@ -89,6 +118,28 @@ function parseCsv(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function readFitSplitFile(path: string): Pick<FitSplitOptions, "trainQueryIds" | "evalQueryIds" | "splitSource"> {
+  const raw = JSON.parse(readFileSync(path, "utf8")) as {
+    trainQueryIds?: unknown;
+    evalQueryIds?: unknown;
+    train?: unknown;
+    eval?: unknown;
+  };
+  const train = raw.trainQueryIds ?? raw.train;
+  const evalIds = raw.evalQueryIds ?? raw.eval;
+  if (!Array.isArray(train) || !train.every((id) => typeof id === "string")) {
+    throw new Error(`fit split file ${path} must contain trainQueryIds: string[]`);
+  }
+  if (!Array.isArray(evalIds) || !evalIds.every((id) => typeof id === "string")) {
+    throw new Error(`fit split file ${path} must contain evalQueryIds: string[]`);
+  }
+  return {
+    trainQueryIds: train,
+    evalQueryIds: evalIds,
+    splitSource: path,
+  };
 }
 
 function writeTrecRunFiles(runDir: string, runs: ScorerRun[], maxDepth: number | null): void {
@@ -128,9 +179,26 @@ function formatCalibrationTable(results: CalibrationResult[]): string {
   return lines.join("\n");
 }
 
-async function makeEmbedder(dtype: string, model: string): Promise<import("@bb25/embeddings").BgeM3Embedder> {
+async function makeEmbedder(
+  dtype: string,
+  model: string,
+  cacheDir?: string,
+  localOnly = false,
+): Promise<import("@bb25/embeddings").BgeM3Embedder> {
   const { BgeM3Embedder } = await import("@bb25/embeddings");
-  return new BgeM3Embedder({ dtype: dtype as never, model });
+  return new BgeM3Embedder({ dtype: dtype as never, model, cacheDir, localOnly });
+}
+
+function embedderMeta(model: string, dtype: string, dim: number, cacheDir?: string, localOnly = false): EmbedderMeta {
+  return {
+    model,
+    dim,
+    dtype,
+    pooling: "cls",
+    normalize: true,
+    ...(cacheDir !== undefined ? { cacheDir } : {}),
+    ...(localOnly ? { localOnly } : {}),
+  };
 }
 
 async function cmdIndex(argv: string[]): Promise<void> {
@@ -142,9 +210,12 @@ async function cmdIndex(argv: string[]): Promise<void> {
       embed: { type: "boolean", default: false },
       dtype: { type: "string", default: "fp32" },
       model: { type: "string", default: "Xenova/bge-m3" },
+      "cache-dir": { type: "string" },
+      "local-only": { type: "boolean", default: false },
       k1: { type: "string" },
       b: { type: "string" },
       "bm25-method": { type: "string", default: "robertson" },
+      "metric-style": { type: "string", default: "pytrec" },
       "id-field": { type: "string", default: "doc_id" },
       "text-field": { type: "string", default: "text" },
       "terms-field": { type: "string" },
@@ -167,11 +238,11 @@ async function cmdIndex(argv: string[]): Promise<void> {
 
   let embedder: EmbedderMeta | null = null;
   if (values.embed) {
-    const e = await makeEmbedder(values.dtype!, values.model!);
+    const e = await makeEmbedder(values.dtype!, values.model!, values["cache-dir"], values["local-only"]);
     process.stderr.write(`Embedding ${docs.length} documents...\n`);
     const vecs = await e.embed(docs.map((d) => d.text));
     for (let i = 0; i < docs.length; i++) docs[i]!.embedding = Array.from(vecs[i]!);
-    embedder = { model: values.model!, dim: e.dim, dtype: values.dtype!, pooling: "cls", normalize: true };
+    embedder = embedderMeta(values.model!, values.dtype!, e.dim, values["cache-dir"], values["local-only"]);
   }
 
   const indexDocs: IndexDoc[] = docs.map((d) => ({
@@ -219,6 +290,8 @@ async function cmdSearch(argv: string[]): Promise<void> {
       embed: { type: "boolean", default: false },
       dtype: { type: "string", default: "fp32" },
       model: { type: "string", default: "Xenova/bge-m3" },
+      "cache-dir": { type: "string" },
+      "local-only": { type: "boolean", default: false },
     },
   });
   const query = positionals[0];
@@ -241,7 +314,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
   let queryEmbedding: number[] | null = null;
   if (mode === "or" || mode === "and") {
     if (values.embed) {
-      const e = await makeEmbedder(values.dtype!, values.model!);
+      const e = await makeEmbedder(values.dtype!, values.model!, values["cache-dir"], values["local-only"]);
       const embs = (await e.embed([query])).map((v) => Array.from(v));
       queryEmbedding = embs[0] ?? null;
     } else {
@@ -278,9 +351,11 @@ async function cmdWarmup(argv: string[]): Promise<void> {
     options: {
       dtype: { type: "string", default: "fp32" },
       model: { type: "string", default: "Xenova/bge-m3" },
+      "cache-dir": { type: "string" },
+      "local-only": { type: "boolean", default: false },
     },
   });
-  const e = await makeEmbedder(values.dtype!, values.model!);
+  const e = await makeEmbedder(values.dtype!, values.model!, values["cache-dir"], values["local-only"]);
   process.stderr.write(`Warming up ${values.model} (dtype=${values.dtype})...\n`);
   await e.warmup();
   process.stderr.write("Ready.\n");
@@ -296,6 +371,8 @@ async function cmdBench(argv: string[]): Promise<void> {
       embed: { type: "boolean", default: false },
       dtype: { type: "string", default: "fp32" },
       model: { type: "string", default: "Xenova/bge-m3" },
+      "cache-dir": { type: "string" },
+      "local-only": { type: "boolean", default: false },
       cutoffs: { type: "string", default: "5,10,20,100" },
       k1: { type: "string" },
       b: { type: "string" },
@@ -308,7 +385,10 @@ async function cmdBench(argv: string[]): Promise<void> {
       "fit-split": { type: "boolean", default: false },
       "fit-train-ratio": { type: "string", default: "0.5" },
       "fit-split-seed": { type: "string", default: "42" },
+      "fit-split-file": { type: "string" },
       "bm25-method": { type: "string", default: "robertson" },
+      "metric-style": { type: "string", default: "pytrec" },
+      scorers: { type: "string" },
       "doc-terms": { type: "string" },
       "doc-fields": { type: "string" },
       "doc-field-terms": { type: "string" },
@@ -335,8 +415,8 @@ async function cmdBench(argv: string[]): Promise<void> {
 
   const k1 = values.k1 !== undefined ? Number(values.k1) : 1.2;
   const b = values.b !== undefined ? Number(values.b) : 0.75;
-  const alpha = values.alpha !== undefined ? Number(values.alpha) : 1.0;
-  const beta = values.beta !== undefined ? Number(values.beta) : 0.5;
+  const alpha = parseBayesianParameter("alpha", values.alpha, 1.0);
+  const beta = parseBayesianParameter("beta", values.beta, 0.5);
   const baseRate = parseBaseRate(values["base-rate"]);
   const baseRateMethod = parseBaseRateMethod(values["base-rate-method"]);
   const baseRateSampleSize =
@@ -345,10 +425,13 @@ async function cmdBench(argv: string[]): Promise<void> {
   const fitTrainRatio = Number(values["fit-train-ratio"]);
   const fitSplitSeed = Number(values["fit-split-seed"]);
   const bm25Method = parseBm25Method(values["bm25-method"]);
+  const metricStyle = parseMetricStyle(values["metric-style"]);
+  const scorers = parseCsv(values.scorers);
   const candidateDepth = values["candidate-depth"] === undefined ? null : Number(values["candidate-depth"]);
   const trecRunDepth = values["trec-run-depth"] === undefined ? null : Number(values["trec-run-depth"]);
   const calibrationBins = values.calibration ? Number(values["calibration-bins"]) : null;
   const docFields = parseCsv(values["doc-fields"]);
+  const explicitFitSplit = values["fit-split-file"] === undefined ? null : readFitSplitFile(values["fit-split-file"]);
   if (trecRunDepth !== null && (!(trecRunDepth > 0) || !Number.isInteger(trecRunDepth))) {
     throw new Error(`trec-run-depth must be a positive integer, got ${values["trec-run-depth"]}`);
   }
@@ -394,7 +477,7 @@ async function cmdBench(argv: string[]): Promise<void> {
         };
 
   if (values.embed) {
-    const e = await makeEmbedder(values.dtype!, values.model!);
+    const e = await makeEmbedder(values.dtype!, values.model!, values["cache-dir"], values["local-only"]);
     process.stderr.write(`Embedding ${docs.length} docs + ${queries.length} queries...\n`);
     const docVecs = await e.embed(docs.map((d) => d.text));
     for (let i = 0; i < docs.length; i++) docs[i]!.embedding = Array.from(docVecs[i]!);
@@ -431,10 +514,15 @@ async function cmdBench(argv: string[]): Promise<void> {
     baseRateSampleSize,
     baseRateSeed,
     bm25Method,
+    metricStyle,
+    scorers: scorers.length === 0 ? null : scorers,
     candidateDepth,
     cutoffs,
     calibrationBins,
-    fitSplit: values["fit-split"] ? { trainRatio: fitTrainRatio, seed: fitSplitSeed } : null,
+    fitSplit:
+      values["fit-split"] || explicitFitSplit !== null
+        ? { trainRatio: fitTrainRatio, seed: fitSplitSeed, ...(explicitFitSplit ?? {}) }
+        : null,
     multiField,
     runs: scorerRuns,
   });
@@ -450,6 +538,9 @@ async function cmdBench(argv: string[]): Promise<void> {
     ...(details.calibration.length > 0 ? { calibration: details.calibration } : {}),
     ...(details.fittedSplit !== null ? { fittedSplit: details.fittedSplit } : {}),
     ...(details.attentionSplits.length > 0 ? { attentionSplits: details.attentionSplits } : {}),
+    ...(details.denseCalibrationSplits.length > 0
+      ? { denseCalibrationSplits: details.denseCalibrationSplits }
+      : {}),
   };
   const json = JSON.stringify(payload, null, 2) + "\n";
   if (values["output-json"] !== undefined) {
