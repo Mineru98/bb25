@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i];
+    if (key === "--") continue;
     if (!key.startsWith("--")) continue;
     const name = key.slice(2);
     const next = argv[i + 1];
@@ -24,24 +27,56 @@ function normalizeMetricName(metric) {
 
 function metricAliases(metric) {
   const normalized = normalizeMetricName(metric);
+  if (normalized === "ece") return ["ece", "ECE"];
+  if (normalized === "brier") return ["brier", "Brier", "brierScore"];
+  if (normalized === "samples") return ["samples", "Samples"];
+  if (normalized === "bins") return ["bins", "Bins"];
   const [, family, cutoff] = normalized.match(/^(ndcg|map|mrr|recall)@(\d+)$/) ?? [];
   if (family === undefined || cutoff === undefined) {
     return [metric, normalized];
   }
   const title = family === "ndcg" ? "NDCG" : family === "map" ? "MAP" : family === "mrr" ? "MRR" : "Recall";
-  return [normalized, `${title}@${cutoff}`, `${family}_cut_${cutoff}`, `${family}${cutoff}`];
+  const aliases = [normalized, `${title}@${cutoff}`, `${family}_cut_${cutoff}`, `${family}${cutoff}`];
+  if (family === "map") aliases.push("MAP", "map");
+  return aliases;
 }
 
-function toPoints(value) {
+function defaultMetricScale(metric) {
+  const normalized = normalizeMetricName(metric);
+  return normalized === "ece" || normalized === "brier" || normalized === "samples" || normalized === "bins"
+    ? "unit"
+    : "points";
+}
+
+function metricUnitLabel(scale) {
+  return scale === "points" ? "points" : "units";
+}
+
+function normalizeMetricValue(value, scale) {
   const n = Number(value);
   if (!Number.isFinite(n)) {
     throw new Error(`invalid metric value: ${value}`);
   }
-  return Math.abs(n) <= 1.0000001 ? n * 100.0 : n;
+  if (scale === "points") {
+    return Math.abs(n) <= 1.0000001 ? n * 100.0 : n;
+  }
+  if (scale === "unit") {
+    return n;
+  }
+  throw new Error(`invalid metric scale: ${scale}`);
 }
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function fileManifest(path) {
+  const data = readFileSync(path);
+  return {
+    path: resolve(path),
+    bytes: statSync(path).size,
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
 }
 
 function addMetric(rows, dataset, scorer, metrics) {
@@ -63,6 +98,17 @@ function extractRows(payload) {
     }
   }
 
+  if (Array.isArray(payload.calibration)) {
+    for (const row of payload.calibration) {
+      addMetric(rows, "average", String(row.scorer), {
+        ece: row.ece,
+        brier: row.brier,
+        samples: row.samples,
+        bins: row.bins,
+      });
+    }
+  }
+
   if (Array.isArray(payload.average)) {
     for (const row of payload.average) {
       addMetric(rows, "average", String(row.scorer), row.metrics);
@@ -72,19 +118,37 @@ function extractRows(payload) {
   if (Array.isArray(payload.runs)) {
     for (const run of payload.runs) {
       const dataset = String(run.dataset ?? "dataset");
-      if (!Array.isArray(run.results)) continue;
-      for (const row of run.results) {
-        addMetric(rows, dataset, String(row.scorer), row.metrics);
+      if (Array.isArray(run.results)) {
+        for (const row of run.results) {
+          addMetric(rows, dataset, String(row.scorer), row.metrics);
+        }
+      }
+      if (Array.isArray(run.calibration)) {
+        for (const row of run.calibration) {
+          addMetric(rows, dataset, String(row.scorer), {
+            ece: row.ece,
+            brier: row.brier,
+            samples: row.samples,
+            bins: row.bins,
+          });
+        }
       }
     }
   }
 
-  const looksLikePythonReference =
+  const pythonReferencePayload =
+    payload.results !== null &&
+    typeof payload.results === "object" &&
     !Array.isArray(payload.results) &&
-    !Array.isArray(payload.runs) &&
-    Object.values(payload).some((value) => value !== null && typeof value === "object" && !Array.isArray(value));
+    !Array.isArray(payload.runs)
+      ? payload.results
+      : payload;
+  const looksLikePythonReference =
+    !Array.isArray(pythonReferencePayload.results) &&
+    !Array.isArray(pythonReferencePayload.runs) &&
+    Object.values(pythonReferencePayload).some((value) => value !== null && typeof value === "object" && !Array.isArray(value));
   if (looksLikePythonReference) {
-    for (const [dataset, methods] of Object.entries(payload)) {
+    for (const [dataset, methods] of Object.entries(pythonReferencePayload)) {
       if (methods === null || typeof methods !== "object" || Array.isArray(methods)) continue;
       for (const [method, metrics] of Object.entries(methods)) {
         if (metrics !== null && typeof metrics === "object" && !Array.isArray(metrics)) {
@@ -102,10 +166,12 @@ function parseMethodMap(raw) {
   if (raw === undefined) return out;
   for (const pair of raw.split(",")) {
     if (pair.trim() === "") continue;
-    const [left, right] = pair.split("=");
-    if (left === undefined || right === undefined) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) {
       throw new Error(`invalid method-map entry: ${pair}`);
     }
+    const left = pair.slice(0, eq);
+    const right = pair.slice(eq + 1);
     out.set(left.trim(), right.trim());
   }
   return out;
@@ -127,35 +193,93 @@ function getScorer(rows, method, explicitName = undefined) {
   return null;
 }
 
-function getMetric(metrics, metric) {
+function getMetric(metrics, metric, scale) {
   for (const alias of metricAliases(metric)) {
     if (Object.prototype.hasOwnProperty.call(metrics, alias)) {
-      return toPoints(metrics[alias]);
+      return normalizeMetricValue(metrics[alias], scale);
     }
   }
   return null;
 }
 
-function averageMetric(datasetMetrics, metric) {
+function averageMetric(datasetMetrics, metric, scale) {
   const values = [];
   for (const metrics of datasetMetrics.values()) {
-    const value = getMetric(metrics, metric);
+    const value = getMetric(metrics, metric, scale);
     if (value !== null) values.push(value);
   }
   if (values.length === 0) return null;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function parseCsv(raw) {
+  if (raw === undefined) return [];
+  return raw.split(",").map((part) => part.trim()).filter(Boolean);
+}
+
+function methodFailureClass(method, kind, metric = "") {
+  const normalized = method.toLowerCase().replace(/[-\s]+/g, "_");
+  const normalizedMetric = normalizeMetricName(metric);
+  if (normalizedMetric === "ece" || normalizedMetric === "brier") return "calibration";
+  if (kind === "missing_metric") return "evaluator";
+  if (normalized === "bm25" || normalized.includes("raw_bm25")) return "BM25/tokenizer";
+  if (normalized === "dense" || normalized.includes("dense")) return "dense embedding";
+  if (normalized === "convex" || normalized === "rrf" || normalized.includes("fusion_baseline")) return "candidate protocol";
+  if (normalized.includes("bayesian") || normalized.includes("balanced") || normalized.includes("logodds")) {
+    return "Bayesian fusion";
+  }
+  return "candidate protocol";
+}
+
+function failureMessage(failure) {
+  switch (failure.kind) {
+    case "missing_reference_method":
+      return `missing reference method ${failure.method}`;
+    case "missing_actual_method":
+      return `missing actual method ${failure.method}`;
+    case "missing_metric":
+      return `${failure.side} method ${failure.method} has no ${failure.metric}`;
+    case "missing_dataset":
+      return `${failure.side} method ${failure.method} missing dataset ${failure.dataset}`;
+    case "diff":
+      return `${failure.method} ${failure.metric} diff ${failure.diff.toFixed(6)} ${failure.unitLabel ?? "points"} > ${failure.tolerance}`;
+    default:
+      return failure.message ?? JSON.stringify(failure);
+  }
+}
+
+function addFailure(failures, failure) {
+  failures.push({
+    classification: methodFailureClass(failure.method ?? "", failure.kind, failure.metric ?? ""),
+    ...failure,
+  });
+}
+
+function datasetValue(datasets, dataset, metric, scale) {
+  const metrics = datasets.get(dataset);
+  return metrics === undefined ? null : getMetric(metrics, metric, scale);
+}
+
 function compare(args) {
   if (args.reference === undefined || args.actual === undefined) {
     throw new Error(
-      "usage: check-bench-json --reference ref.json --actual actual.json [--methods BM25,Dense,Convex,RRF] [--metric ndcg@10] [--tolerance-points 0.50]",
+      "usage: check-bench-json --reference ref.json --actual actual.json [--methods BM25,Dense,Convex,RRF] [--metric ndcg@10|ece|brier] [--metric-scale points|unit] [--tolerance 0.005] [--tolerance-points 0.50] [--datasets arguana,fiqa,...] [--manifest-out manifest.json]",
     );
   }
 
   const methods = (args.methods ?? "BM25,Dense,Convex,RRF").split(",").map((s) => s.trim()).filter(Boolean);
   const metric = args.metric ?? "ndcg@10";
-  const tolerance = args["tolerance-points"] === undefined ? 0.5 : Number(args["tolerance-points"]);
+  const metricScale = args["metric-scale"] ?? defaultMetricScale(metric);
+  const tolerance =
+    args.tolerance !== undefined
+      ? Number(args.tolerance)
+      : args["tolerance-points"] === undefined
+        ? metricScale === "points"
+          ? 0.5
+          : 0.005
+        : Number(args["tolerance-points"]);
+  const unitLabel = metricUnitLabel(metricScale);
+  const requiredDatasets = parseCsv(args.datasets);
   const refMap = parseMethodMap(args["reference-method-map"]);
   const actualMap = parseMethodMap(args["actual-method-map"]);
   const refRows = extractRows(readJson(args.reference));
@@ -163,60 +287,144 @@ function compare(args) {
 
   const failures = [];
   const lines = [];
+  const comparisons = [];
   for (const method of methods) {
     const ref = getScorer(refRows, method, refMap.get(method));
     const actual = getScorer(actualRows, method, actualMap.get(method));
     if (ref === null) {
-      failures.push(`missing reference method ${method}`);
+      addFailure(failures, { kind: "missing_reference_method", method });
       continue;
     }
     if (actual === null) {
-      failures.push(`missing actual method ${method}`);
+      addFailure(failures, { kind: "missing_actual_method", method });
       continue;
     }
 
-    const refAvg = averageMetric(ref.datasets, metric);
-    const actualAvg = averageMetric(actual.datasets, metric);
+    const refAvg = averageMetric(ref.datasets, metric, metricScale);
+    const actualAvg = averageMetric(actual.datasets, metric, metricScale);
     if (refAvg === null) {
-      failures.push(`reference method ${method} has no ${metric}`);
+      addFailure(failures, { kind: "missing_metric", method, side: "reference", metric });
       continue;
     }
     if (actualAvg === null) {
-      failures.push(`actual method ${method} has no ${metric}`);
+      addFailure(failures, { kind: "missing_metric", method, side: "actual", metric });
       continue;
     }
     const diff = Math.abs(actualAvg - refAvg);
-    lines.push(`${method}\tref=${refAvg.toFixed(4)}\tactual=${actualAvg.toFixed(4)}\tdiff=${diff.toFixed(4)} points`);
+    lines.push(`${method}\tref=${refAvg.toFixed(6)}\tactual=${actualAvg.toFixed(6)}\tdiff=${diff.toFixed(6)} ${unitLabel}`);
+    const row = {
+      method,
+      referenceName: ref.name,
+      actualName: actual.name,
+      metric,
+      metricScale,
+      referenceAverage: refAvg,
+      actualAverage: actualAvg,
+      diff,
+      tolerance,
+      datasets: [],
+    };
     if (diff > tolerance) {
-      failures.push(`${method} ${metric} diff ${diff.toFixed(4)} > ${tolerance}`);
+      addFailure(failures, {
+        kind: "diff",
+        method,
+        metric,
+        metricScale,
+        unitLabel,
+        reference: refAvg,
+        actual: actualAvg,
+        diff,
+        tolerance,
+      });
     }
 
-    const sharedDatasets = [...ref.datasets.keys()].filter((dataset) => actual.datasets.has(dataset));
-    for (const dataset of sharedDatasets) {
-      const refValue = getMetric(ref.datasets.get(dataset), metric);
-      const actualValue = getMetric(actual.datasets.get(dataset), metric);
+    const datasetNames =
+      requiredDatasets.length > 0
+        ? requiredDatasets
+        : [...ref.datasets.keys()].filter((dataset) => actual.datasets.has(dataset));
+    for (const dataset of datasetNames) {
+      if (!ref.datasets.has(dataset)) {
+        addFailure(failures, { kind: "missing_dataset", method, side: "reference", dataset });
+        continue;
+      }
+      if (!actual.datasets.has(dataset)) {
+        addFailure(failures, { kind: "missing_dataset", method, side: "actual", dataset });
+        continue;
+      }
+      const refValue = datasetValue(ref.datasets, dataset, metric, metricScale);
+      const actualValue = datasetValue(actual.datasets, dataset, metric, metricScale);
       if (refValue === null || actualValue === null) continue;
       const datasetDiff = Math.abs(actualValue - refValue);
-      lines.push(`  ${dataset}\tref=${refValue.toFixed(4)}\tactual=${actualValue.toFixed(4)}\tdiff=${datasetDiff.toFixed(4)} points`);
+      lines.push(`  ${dataset}\tref=${refValue.toFixed(6)}\tactual=${actualValue.toFixed(6)}\tdiff=${datasetDiff.toFixed(6)} ${unitLabel}`);
+      row.datasets.push({ dataset, reference: refValue, actual: actualValue, diff: datasetDiff });
     }
+    comparisons.push(row);
   }
 
-  return { failures, lines };
+  const classifications = {};
+  for (const failure of failures) {
+    classifications[failure.classification] = (classifications[failure.classification] ?? 0) + 1;
+  }
+
+  return {
+    passed: failures.length === 0,
+    methods,
+    metric,
+    metricScale,
+    tolerancePoints: metricScale === "points" ? tolerance : null,
+    toleranceUnits: metricScale === "unit" ? tolerance : null,
+    tolerance,
+    requiredDatasets,
+    failures,
+    classifications,
+    comparisons,
+    lines,
+  };
 }
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help !== undefined || args.h !== undefined) {
   process.stdout.write(
-    "usage: check-bench-json --reference ref.json --actual actual.json [--methods BM25,Dense,Convex,RRF] [--metric ndcg@10] [--tolerance-points 0.50]\n",
+    "usage: check-bench-json --reference ref.json --actual actual.json [--methods BM25,Dense,Convex,RRF] [--metric ndcg@10|ece|brier] [--metric-scale points|unit] [--tolerance 0.005] [--tolerance-points 0.50] [--datasets arguana,fiqa,...] [--out result.json] [--manifest-out manifest.json]\n",
   );
   process.exit(0);
 }
-const { failures, lines } = compare(args);
+const result = compare(args);
+const { failures, lines } = result;
+if (args.out !== undefined) {
+  mkdirSync(dirname(args.out), { recursive: true });
+  writeFileSync(args.out, JSON.stringify({ generatedAt: new Date().toISOString(), kind: "bb25-bench-json-check", ...result }, null, 2) + "\n", "utf8");
+}
+if (args["manifest-out"] !== undefined) {
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    kind: "bb25-bench-json-check-manifest",
+    command: process.argv.slice(1),
+    inputs: {
+      reference: fileManifest(args.reference),
+      actual: fileManifest(args.actual),
+    },
+    summary: {
+      passed: result.passed,
+      methods: result.methods,
+      metric: result.metric,
+      metricScale: result.metricScale,
+      tolerancePoints: result.tolerancePoints,
+      toleranceUnits: result.toleranceUnits,
+      tolerance: result.tolerance,
+      requiredDatasets: result.requiredDatasets,
+      classifications: result.classifications,
+      failures: result.failures.map(failureMessage),
+    },
+  };
+  mkdirSync(dirname(args["manifest-out"]), { recursive: true });
+  writeFileSync(args["manifest-out"], JSON.stringify(manifest, null, 2) + "\n", "utf8");
+}
 if (lines.length > 0) {
   process.stdout.write(lines.join("\n") + "\n");
 }
 if (failures.length > 0) {
-  process.stderr.write(failures.map((failure) => `FAIL ${failure}`).join("\n") + "\n");
+  process.stderr.write(failures.map((failure) => `FAIL [${failure.classification}] ${failureMessage(failure)}`).join("\n") + "\n");
   process.exitCode = 1;
 } else {
   process.stdout.write("benchmark JSON matches expected thresholds\n");

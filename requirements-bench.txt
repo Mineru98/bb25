@@ -1,0 +1,7 @@
+bayesian-bm25[scorer]
+bm25s
+ir-datasets
+sentence-transformers
+snowballstemmer
+PyStemmer
+pytrec_eval
