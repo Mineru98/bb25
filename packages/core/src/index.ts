@@ -66,6 +66,15 @@ export {
 } from "./probability.js";
 
 export { PlattCalibrator, IsotonicCalibrator } from "./calibration.js";
+export {
+  VectorProbabilityTransform,
+  gaussianPDF,
+  silvermanBandwidth,
+  kernelDensity,
+  ivfDensityPrior,
+  knnDensityPrior,
+} from "./vectorProbability.js";
+export type { VectorProbabilityMethod, VectorProbabilityOptions, VectorGmmOptions } from "./vectorProbability.js";
 
 export { LearnableLogOddsWeights } from "./learnableWeights.js";
 export { AttentionLogOddsWeights } from "./attentionWeights.js";

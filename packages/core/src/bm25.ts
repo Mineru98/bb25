@@ -38,6 +38,9 @@ export class BM25Scorer {
     }
     const norm = this.lengthNorm(doc);
     const idfVal = this.idf(term);
+    if (this.method === "lucene") {
+      return (idfVal * tf) / (this.k1 * norm + tf);
+    }
     return (idfVal * (this.k1 + 1.0) * tf) / (this.k1 * norm + tf);
   }
 
@@ -47,7 +50,8 @@ export class BM25Scorer {
       return 0.0;
     }
     const norm = this.lengthNorm(doc);
-    const boost = ((this.k1 + 1.0) * tf) / (this.k1 * norm + tf);
+    const boost =
+      this.method === "lucene" ? tf / (this.k1 * norm + tf) : ((this.k1 + 1.0) * tf) / (this.k1 * norm + tf);
     const idfVal = this.idf(term);
     return idfVal * boost;
   }
@@ -65,6 +69,9 @@ export class BM25Scorer {
     const idfVal = this.idf(term);
     if (idfVal <= 0.0) {
       return 0.0;
+    }
+    if (this.method === "lucene") {
+      return idfVal;
     }
     return (this.k1 + 1.0) * idfVal;
   }

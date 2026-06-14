@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BM25Scorer,
   BayesianProbabilityTransform,
+  BlockMaxIndex,
   Corpus,
   cosineToProbability,
   logOddsConjunction,
@@ -75,6 +76,43 @@ describe("Tier 0 seeded probability properties", () => {
     }
   });
 
+  it("composite priors stay bounded, symmetric, and monotonic in term frequency", () => {
+    const rng = makeRng(99);
+
+    for (let i = 0; i < 200; i++) {
+      const tf = rng() * 30.0;
+      const docLenRatio = rng() * 2.0;
+      const pTf = BayesianProbabilityTransform.tfPrior(tf);
+      const pNorm = BayesianProbabilityTransform.normPrior(docLenRatio);
+      const prior = BayesianProbabilityTransform.compositePrior(tf, docLenRatio);
+
+      expect(pTf).toBeGreaterThanOrEqual(0.2 - 1e-12);
+      expect(pTf).toBeLessThanOrEqual(0.9 + 1e-12);
+      expect(pNorm).toBeGreaterThanOrEqual(0.3 - 1e-12);
+      expect(pNorm).toBeLessThanOrEqual(0.9 + 1e-12);
+      expect(prior).toBeGreaterThanOrEqual(0.1 - 1e-12);
+      expect(prior).toBeLessThanOrEqual(0.9 + 1e-12);
+    }
+
+    for (let i = 0; i <= 20; i++) {
+      const delta = i / 40;
+      expect(BayesianProbabilityTransform.normPrior(0.5 - delta)).toBeCloseTo(
+        BayesianProbabilityTransform.normPrior(0.5 + delta),
+        12,
+      );
+    }
+
+    for (let i = 0; i < 50; i++) {
+      const docLenRatio = rng() * 2.0;
+      let prev = BayesianProbabilityTransform.compositePrior(0, docLenRatio);
+      for (let tf = 1; tf <= 30; tf++) {
+        const next = BayesianProbabilityTransform.compositePrior(tf, docLenRatio);
+        expect(next).toBeGreaterThanOrEqual(prev - 1e-12);
+        prev = next;
+      }
+    }
+  });
+
   it("fusion primitives preserve probability identities on seeded samples", () => {
     const rng = makeRng(7);
     for (let i = 0; i < 100; i++) {
@@ -123,6 +161,57 @@ describe("Tier 0 seeded probability properties", () => {
         const raw = bm25.scoreTermStandard(term, doc);
         const actual = transform.scoreToProbability(raw, tf, doc.length / corpus.avgdl);
         expect(upper).toBeGreaterThanOrEqual(actual - 1e-12);
+      }
+    }
+  });
+
+  it("block-max Bayesian upper bounds are never below seeded document probabilities", () => {
+    const rng = makeRng(314159);
+    const nTerms = 5;
+    const nDocs = 31;
+    const blockSize = 7;
+    const scoreMatrix: number[][] = [];
+    const tfs: number[][] = [];
+    const docLenRatios = Array.from({ length: nDocs }, () => 0.1 + rng() * 1.9);
+
+    for (let term = 0; term < nTerms; term++) {
+      const scores: number[] = [];
+      const termTfs: number[] = [];
+      for (let doc = 0; doc < nDocs; doc++) {
+        scores.push(rng() * 6.0);
+        termTfs.push(1 + Math.floor(rng() * 25));
+      }
+      scoreMatrix.push(scores);
+      tfs.push(termTfs);
+    }
+
+    const index = new BlockMaxIndex(blockSize);
+    index.build(scoreMatrix);
+    const transform = new BayesianProbabilityTransform(1.1, 0.2, 0.3);
+    const pMax = 0.9;
+
+    for (let term = 0; term < nTerms; term++) {
+      for (let block = 0; block < index.nBlocks(); block++) {
+        const scoreBound = index.blockUpperBound(term, block);
+        const probabilityBound = index.bayesianBlockUpperBound(term, block, transform, pMax);
+        const start = block * blockSize;
+        const end = Math.min(start + blockSize, nDocs);
+
+        for (let doc = start; doc < end; doc++) {
+          const score = scoreMatrix[term]![doc]!;
+          expect(scoreBound).toBeGreaterThanOrEqual(score - 1e-12);
+
+          const prior = BayesianProbabilityTransform.compositePrior(
+            tfs[term]![doc]!,
+            docLenRatios[doc]!,
+          );
+          const actual = BayesianProbabilityTransform.posterior(
+            transform.likelihood(score),
+            prior,
+            transform.baseRate,
+          );
+          expect(probabilityBound).toBeGreaterThanOrEqual(actual - 1e-12);
+        }
       }
     }
   });
