@@ -30,5 +30,11 @@ node_modules/
 *.tsbuildinfo
 .pnpm-store/
 
+# Local agent/runtime artifacts
+.omx/
+
+# Generated benchmark/log artifacts
+reference-results/
+
 # OS
 .DS_Store
