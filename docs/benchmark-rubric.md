@@ -77,6 +77,28 @@ implementation verdict.
 | Tier 4 | Target | Manual/release | Needs stored sparse+dense top-1000 union runs with `all-MiniLM-L6-v2` and `pytrec_eval` parity; export cache paths are now manifest-backed. |
 | Tier 5 | Target | Release audit | Run only after Tier 0-4 are stable. |
 
+Operational gate tiers:
+
+- **PR/local**: `corepack pnpm typecheck`, `corepack pnpm test`, and
+  `corepack pnpm bench:synthetic-smoke -- --out /tmp/bb25-synthetic-smoke.json --manifest-out /tmp/bb25-synthetic-smoke-manifest.json`.
+  Use explicit temporary smoke outputs so PR/local checks do not rewrite
+  `reference-results/**`. Lint is **N/A** in this repository until a package
+  `lint` script exists.
+- **Nightly/manual**: environment setup, BEIR JSONL export, sparse parity,
+  baseline parity with `--dataset-gate warn`, and readiness `--profile all`.
+- **Release/public claim**: baseline parity with dataset strictness, readiness
+  `--profile release`, and `bench:hybrid-claim-gate`.
+
+Artifact-refresh contract:
+
+- `reference-results/**` changes are explicit benchmark artifact refreshes, not
+  incidental verification output.
+- Every public benchmark claim must cite result JSON, manifest JSON, command
+  return codes, protocol fields, and input/artifact hashes.
+- The current BM25/SciFact per-dataset deviation is a known release blocker when
+  it exceeds `0.50` NDCG points, even if the method-average development gate is
+  green.
+
 Only Tier 0 and the non-embedding portion of Tier 1 should block normal pull
 requests. Embedding-backed SQuAD and BEIR runs are runtime- and model-cache
 sensitive and should run as manual or scheduled jobs with saved manifests.
@@ -315,6 +337,8 @@ Pass criteria:
 
 - First gate: `BM25`, `Dense`, `Convex`, and `RRF` must reproduce within
   `0.50` NDCG points. If they do not, the benchmark environment is not aligned.
+  Development readiness may apply this to the method average; release/public
+  claims must also pass the same threshold at the dataset level.
 - Same embeddings/tokenizer/evaluator: Bayesian methods should reproduce within
   `0.50` NDCG points.
 - Different embedding runtime but same model: allow up to `1.50` NDCG points,
@@ -446,7 +470,8 @@ Current implementation support added for this migration audit:
 - JSON baseline comparison gate in `scripts/check-bench-json.mjs`, including
   required dataset checks, row-level failure classification, result JSON, and
   manifest output. It also compares calibration rows such as ECE/Brier with
-  unit-scale tolerances via `--metric ece|brier`.
+  unit-scale tolerances via `--metric ece|brier`, and can enforce
+  dataset-level outliers with `--dataset-gate warn|strict`.
 - Baseline parity orchestration in `scripts/run-baseline-parity.mjs`, exposed
   as `pnpm bench:baseline-parity`, to run fresh TS BEIR, pytrec judgment, and
   JSON parity check in one command.
@@ -487,6 +512,10 @@ Current implementation support added for this migration audit:
 - Current stored hybrid baseline parity passes `BM25`, `Dense`, `Convex`, and
   `RRF` average NDCG@10 within `0.50` points against the Python reference using
   `pytrec_eval` over the five BEIR datasets.
+- The stricter release/public-claim profile adds a per-dataset `0.50` NDCG-point
+  threshold. The current stored BM25/SciFact comparison is a known outlier, so
+  the release profile is expected to fail until that protocol gap is closed or
+  documented with a refreshed artifact.
 - BEIR JSONL export and runner scripts:
   `scripts/prepare-beir-jsonl.py`, `scripts/prepare-beir-jsonl-suite.py`, and
   `scripts/run-beir-jsonl-bench.mjs`; export manifests include
@@ -507,7 +536,9 @@ corepack pnpm bench:squad-smoke -- \
   --embedding-cache-dir /tmp/bb25-embedding-cache/bge-m3-q8 \
   --require-embedding-cache \
   --hash-embedding-cache
-corepack pnpm bench:synthetic-smoke
+corepack pnpm bench:synthetic-smoke -- \
+  --out /tmp/bb25-synthetic-smoke.json \
+  --manifest-out /tmp/bb25-synthetic-smoke-manifest.json
 ```
 
 Reference Python sparse calibration and BEIR hybrid:
@@ -581,12 +612,42 @@ corepack pnpm bench:baseline-parity -- \
   --datasets arguana,fiqa,nfcorpus,scidocs,scifact \
   --methods BM25,Dense,Convex,RRF \
   --metric ndcg@10 \
-  --tolerance-points 0.50
+  --tolerance-points 0.50 \
+  --dataset-gate warn \
+  --dataset-tolerance-points 0.50
 
 corepack pnpm bench:audit-readiness -- \
   --profile all \
   --root reference-results \
   --out reference-results/manifests/readiness-audit.json
+
+corepack pnpm bench:audit-readiness -- \
+  --profile release \
+  --root reference-results \
+  --dataset-tolerance-points 0.50 \
+  --out reference-results/manifests/readiness-audit-release.json
+
+# The claim gate requires a strict dataset-level baseline parity result.
+corepack pnpm bench:baseline-parity -- \
+  --python .venv-bench/bin/python \
+  --root /tmp/beir-jsonl \
+  --reference reference-results/python/hybrid-beir.json \
+  --datasets arguana,fiqa,nfcorpus,scidocs,scifact \
+  --methods BM25,Dense,Convex,RRF \
+  --metric ndcg@10 \
+  --tolerance-points 0.50 \
+  --dataset-gate strict \
+  --dataset-tolerance-points 0.50
+
+corepack pnpm bench:hybrid-claim-gate -- \
+  --actual reference-results/ts/hybrid-beir-pytrec.json \
+  --reference reference-results/python/hybrid-beir.json \
+  --baseline-parity reference-results/ts/baseline-parity.json \
+  --actual-manifest reference-results/manifests/ts-hybrid-beir-pytrec.json \
+  --baseline-runner-manifest reference-results/manifests/baseline-parity-runner.json \
+  --methods bayesian_vector_balanced,bayesian_logodds \
+  --out reference-results/ts/hybrid-claim-gate.json \
+  --manifest-out reference-results/manifests/hybrid-claim-gate.json
 ```
 
 Keep the stored manifests with the reported results; a green score without the

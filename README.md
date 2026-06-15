@@ -93,8 +93,26 @@ corepack pnpm bench:squad-smoke -- \
 
 ## Benchmark Gates
 
+Gate tiers:
+
+- **PR/local**: `corepack pnpm typecheck`, `corepack pnpm test`, and
+  `corepack pnpm bench:synthetic-smoke -- --out /tmp/bb25-synthetic-smoke.json --manifest-out /tmp/bb25-synthetic-smoke-manifest.json`.
+  These are fixture/local checks; use explicit temporary smoke outputs in PR
+  checks so `reference-results/**` is not rewritten. There is currently no
+  `lint` package script, so lint evidence is **N/A** until a lint command is
+  added.
+- **Nightly/manual**: Python environment setup, BEIR JSONL preparation, sparse
+  parity, baseline parity, and `bench:audit-readiness -- --profile all`.
+- **Release/public claim**: strict dataset-level readiness plus Bayesian hybrid
+  claim gate. Public numbers must point to result JSON, manifest JSON, command
+  return codes, and input/artifact hashes. Treat any `reference-results/**`
+  update as an explicit artifact-refresh change, not incidental verification
+  output.
+
 ```bash
-corepack pnpm bench:synthetic-smoke
+corepack pnpm bench:synthetic-smoke -- \
+  --out /tmp/bb25-synthetic-smoke.json \
+  --manifest-out /tmp/bb25-synthetic-smoke-manifest.json
 corepack pnpm bench:setup-env -- \
   --python python3.12 \
   --venv .venv-bench \
@@ -111,4 +129,36 @@ corepack pnpm bench:baseline-parity -- \
 corepack pnpm bench:audit-readiness -- \
   --profile all \
   --out reference-results/manifests/readiness-audit.json
+# Release/public-claim parity is stricter: it enforces the same threshold per
+# dataset instead of only on the five-dataset method average. The hybrid claim
+# gate consumes this strict baseline-parity result and rejects missing metric
+# provenance or a non-strict dataset gate.
+corepack pnpm bench:baseline-parity -- \
+  --python .venv-bench/bin/python \
+  --root /tmp/beir-jsonl \
+  --reference reference-results/python/hybrid-beir.json \
+  --datasets arguana,fiqa,nfcorpus,scidocs,scifact \
+  --methods BM25,Dense,Convex,RRF \
+  --metric ndcg@10 \
+  --tolerance-points 0.50 \
+  --dataset-gate strict \
+  --dataset-tolerance-points 0.50
+corepack pnpm bench:audit-readiness -- \
+  --profile release \
+  --dataset-tolerance-points 0.50 \
+  --out reference-results/manifests/readiness-audit-release.json
+corepack pnpm bench:hybrid-claim-gate -- \
+  --actual reference-results/ts/hybrid-beir-pytrec.json \
+  --reference reference-results/python/hybrid-beir.json \
+  --baseline-parity reference-results/ts/baseline-parity.json \
+  --actual-manifest reference-results/manifests/ts-hybrid-beir-pytrec.json \
+  --baseline-runner-manifest reference-results/manifests/baseline-parity-runner.json \
+  --out reference-results/ts/hybrid-claim-gate.json \
+  --manifest-out reference-results/manifests/hybrid-claim-gate.json
 ```
+
+Known release caveat: the current stored BM25/SciFact baseline comparison has
+been observed above the `0.50` per-dataset NDCG-point threshold while the
+method-average development gate remains green. A release/public claim must
+either root-cause and refresh that artifact or carry an explicit manifest-backed
+waiver.

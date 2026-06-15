@@ -227,6 +227,34 @@ describe("bench metrics", () => {
     expect(scores.get("sparse-only")).toBeCloseTo(1 / 61, 12);
   });
 
+  it("baseline-only scorer filter preserves sparse+dense candidate-union tie semantics", () => {
+    const corpus = new Corpus();
+    corpus.addDocumentTokens("sparse-only", "", ["needle"], [0, 1]);
+    corpus.addDocumentTokens("dense-only", "", ["other"], [1, 0]);
+    corpus.addDocumentTokens("neither", "", ["other"], [-1, 0]);
+    corpus.buildIndex();
+
+    const queries: BenchQuery[] = [
+      { queryId: "q1", text: "needle", terms: ["needle"], embedding: [1, 0] },
+    ];
+    const qrels: Qrels = new Map([["q1", new Map([["dense-only", 1]]) as RelMap]]);
+    const runs: NonNullable<Parameters<typeof runBench>[3]>["runs"] = [];
+
+    const details = runBenchWithDetails(corpus, queries, qrels, {
+      bm25Method: "lucene",
+      candidateDepth: 1,
+      cutoffs: [1],
+      scorers: ["RRF"],
+      runs,
+    });
+
+    expect(details.results.map((row) => row.scorer)).toEqual(["rrf"]);
+    expect(details.options.scorers).toEqual(["rrf"]);
+    expect(details.results[0]!.metrics["ndcg@1"]).toBeCloseTo(1, 12);
+    const rrf = runs!.find((run) => run.scorer === "rrf" && run.queryId === "q1")!;
+    expect(rrf.scores.map(([docId]) => docId).sort()).toEqual(["dense-only", "sparse-only"]);
+  });
+
   it("resolves percentile base-rate auto from pseudo-query BM25 scores", () => {
     const corpus = new Corpus();
     corpus.addDocumentTokens("d1", "", ["alpha"], []);

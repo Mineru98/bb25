@@ -204,6 +204,9 @@ function main() {
     ];
     addIfDefined(checkCommand, "--reference-method-map", args["reference-method-map"]);
     addIfDefined(checkCommand, "--actual-method-map", args["actual-method-map"]);
+    addIfDefined(checkCommand, "--dataset-gate", args["dataset-gate"]);
+    addIfDefined(checkCommand, "--dataset-tolerance", args["dataset-tolerance"]);
+    addIfDefined(checkCommand, "--dataset-tolerance-points", args["dataset-tolerance-points"]);
     const checkRecord = dryRun
       ? { name: "baseline-parity-check", command: checkCommand, dryRun: true, returncode: 0, stdout: "", stderr: "" }
       : { name: "baseline-parity-check", ...run(checkCommand, { cwd: repoRoot }) };
@@ -234,6 +237,11 @@ function main() {
       scorers: splitCsv(args.scorers ?? scorerCsvFromMethods(args.methods ?? "BM25,Dense,Convex,RRF")),
       metric: args.metric ?? "ndcg@10",
       tolerancePoints: Number(args["tolerance-points"] ?? "0.50"),
+      datasetGate: args["dataset-gate"] ?? "off",
+      datasetTolerance:
+        args["dataset-tolerance"] === undefined && args["dataset-tolerance-points"] === undefined
+          ? null
+          : Number(args["dataset-tolerance"] ?? args["dataset-tolerance-points"]),
     },
     files: {
       reference: fileManifest(resolve(args.reference)),

@@ -21,6 +21,8 @@ const HYBRID_REQUIRED = [
   "manifests/baseline-parity-runner.json",
 ];
 
+const SUPPORTED_PROTOCOL_VERSION = 1;
+
 const SPARSE_REQUIRED = [
   "python/sparse-benchmark.json",
   "python/base-rate.json",
@@ -62,19 +64,31 @@ function parseCsv(raw) {
 }
 
 function parseProfiles(raw) {
-  const profiles = parseCsv(raw ?? "hybrid");
-  if (profiles.length === 0) return ["hybrid"];
-  if (profiles.includes("all")) return ["hybrid", "sparse"];
+  const requested = parseCsv(raw ?? "hybrid");
+  const profiles = requested.length === 0 ? ["hybrid"] : requested;
+  const expanded = [];
   for (const profile of profiles) {
-    if (profile !== "hybrid" && profile !== "sparse") {
+    if (profile === "all") {
+      expanded.push("hybrid", "sparse");
+    } else if (profile === "release") {
+      expanded.push("hybrid", "sparse", "hybrid-strict");
+    } else if (profile === "hybrid-strict") {
+      expanded.push("hybrid", "hybrid-strict");
+    } else if (profile === "hybrid" || profile === "sparse") {
+      expanded.push(profile);
+    } else {
       throw new Error(`unknown readiness profile: ${profile}`);
     }
   }
-  return profiles;
+  return unique(expanded);
 }
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+function normalizeName(value) {
+  return String(value).trim().toLowerCase().replace(/[-\s]+/g, "_");
 }
 
 function readJsonIfExists(path) {
@@ -197,6 +211,53 @@ function parityCheck(payload) {
   };
 }
 
+function datasetParityCheck(payload, expectedDatasets, tolerance) {
+  const comparisons = Array.isArray(payload.comparisons) ? payload.comparisons : [];
+  const violations = [];
+  const missing = [];
+  let maxDiff = 0;
+  let maxLabel = null;
+
+  for (const comparison of comparisons) {
+    const method = String(comparison?.method ?? "unknown");
+    const datasets = Array.isArray(comparison?.datasets) ? comparison.datasets : [];
+    const seen = new Set();
+    for (const row of datasets) {
+      const dataset = String(row?.dataset ?? "");
+      if (dataset !== "") seen.add(dataset);
+      const diff = Number(row?.diff);
+      if (!Number.isFinite(diff)) continue;
+      if (diff > maxDiff) {
+        maxDiff = diff;
+        maxLabel = `${method}/${dataset}`;
+      }
+      if (diff > tolerance) {
+        violations.push({ method, dataset, diff });
+      }
+    }
+    for (const dataset of expectedDatasets) {
+      if (!seen.has(dataset)) missing.push(`${method}/${dataset}`);
+    }
+  }
+
+  if (comparisons.length === 0) {
+    return { passed: false, message: "baseline parity has no comparison rows" };
+  }
+  if (missing.length > 0) {
+    return { passed: false, message: `baseline parity missing dataset rows: ${missing.slice(0, 5).join(",")}${missing.length > 5 ? ",..." : ""}` };
+  }
+  if (violations.length > 0) {
+    return {
+      passed: false,
+      message: `dataset-level baseline parity failed: ${violations.length} diff(s) > ${tolerance}; max ${maxLabel}=${maxDiff.toFixed(6)}`,
+    };
+  }
+  return {
+    passed: true,
+    message: `dataset-level baseline parity passed: max ${maxLabel ?? "n/a"}=${maxDiff.toFixed(6)} <= ${tolerance}`,
+  };
+}
+
 function passedFieldCheck(label) {
   return (payload) => {
     const passed = payload.passed === true;
@@ -231,6 +292,160 @@ function datasetCoverageCheck(payload, expectedDatasets) {
   };
 }
 
+function fileRecordOk(record) {
+  return record !== null && typeof record === "object" && record.exists === true && Number(record.bytes ?? 0) > 0;
+}
+
+function listMissing(expected, actual) {
+  const actualSet = new Set(actual.map((value) => String(value)));
+  return expected.filter((value) => !actualSet.has(value));
+}
+
+function commandFlag(command, flag) {
+  if (!Array.isArray(command)) return undefined;
+  const index = command.indexOf(flag);
+  return index < 0 ? undefined : command[index + 1];
+}
+
+function firstCommandFlag(payload, flag) {
+  const commands = Array.isArray(payload.commands) ? payload.commands : [];
+  for (const command of commands) {
+    const value = commandFlag(command.command, flag);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function cliArg(payload, key) {
+  return payload.cliArgs?.[key] ?? firstCommandFlag(payload, `--${key}`);
+}
+
+function scorerListFrom(value) {
+  if (Array.isArray(value)) return value.map(normalizeName).filter(Boolean);
+  if (typeof value === "string") return parseCsv(value).map(normalizeName);
+  return [];
+}
+
+function protocolResult(failures, passedMessage) {
+  return {
+    passed: failures.length === 0,
+    message: failures.length === 0 ? passedMessage : failures.slice(0, 8).join("; "),
+  };
+}
+
+function protocolVersionFailures(payload, label) {
+  const version = Number(payload.protocolVersion ?? SUPPORTED_PROTOCOL_VERSION);
+  if (Number.isInteger(version) && version === SUPPORTED_PROTOCOL_VERSION) return [];
+  return [`${label} protocolVersion ${payload.protocolVersion ?? "missing"} is not supported by readiness schema v${SUPPORTED_PROTOCOL_VERSION}`];
+}
+
+function hybridExportProtocolCheck(payload, expectedDatasets) {
+  const failures = protocolVersionFailures(payload, "hybrid export");
+  if (payload.kind !== "bb25-beir-jsonl-suite") failures.push("hybrid export manifest kind is not bb25-beir-jsonl-suite");
+  if (payload.options?.tokenizer === undefined) failures.push("missing export tokenizer provenance");
+  if (payload.options?.split === undefined) failures.push("missing export split provenance");
+  if (!Object.prototype.hasOwnProperty.call(payload.options ?? {}, "embedModel")) failures.push("missing embedding model provenance");
+  if (!Object.prototype.hasOwnProperty.call(payload.options ?? {}, "embedCacheDir")) failures.push("missing embedding cache provenance");
+
+  const datasetEntries = Array.isArray(payload.datasets) ? payload.datasets : [];
+  const presentDatasets = datasetEntries.map((entry) => String(entry?.dataset ?? ""));
+  const missingDatasets = listMissing(expectedDatasets, presentDatasets);
+  if (missingDatasets.length > 0) failures.push(`export manifest missing datasets: ${missingDatasets.join(",")}`);
+
+  for (const entry of datasetEntries) {
+    const dataset = String(entry?.dataset ?? "unknown");
+    const exportManifest = entry?.exportManifest;
+    if (exportManifest === null || typeof exportManifest !== "object") {
+      failures.push(`${dataset} missing per-dataset export manifest`);
+      continue;
+    }
+    if (exportManifest.tokenizer === undefined) failures.push(`${dataset} missing tokenizer`);
+    if (exportManifest.split === undefined) failures.push(`${dataset} missing split`);
+    if (exportManifest.irDatasetId === undefined) failures.push(`${dataset} missing irDatasetId`);
+    if (!fileRecordOk(entry?.files?.qrels) && !fileRecordOk(exportManifest.files?.qrels)) {
+      failures.push(`${dataset} qrels file is not manifest-backed`);
+    }
+    const embedding = exportManifest.embedding;
+    if (embedding === null || typeof embedding !== "object") {
+      failures.push(`${dataset} missing embedding provenance`);
+    } else {
+      for (const key of ["model", "cacheDir", "localFilesOnly", "normalize"]) {
+        if (!Object.prototype.hasOwnProperty.call(embedding, key)) failures.push(`${dataset} embedding.${key} missing`);
+      }
+    }
+  }
+
+  return protocolResult(failures, "hybrid export protocol provenance valid");
+}
+
+function tsHybridProtocolCheck(payload, expectedDatasets) {
+  const failures = protocolVersionFailures(payload, "TS hybrid");
+  const expectedScorers = ["bm25", "dense", "convex", "rrf"];
+  if (payload.kind !== "bb25-beir-jsonl-bench") failures.push("TS hybrid manifest kind is not bb25-beir-jsonl-bench");
+  if (String(cliArg(payload, "bm25-method") ?? "") !== "lucene") failures.push("TS hybrid bm25-method must be lucene");
+  const candidateDepth = Number(cliArg(payload, "candidate-depth"));
+  if (!Number.isInteger(candidateDepth) || candidateDepth <= 0) failures.push("TS hybrid candidate-depth must be a positive integer");
+  const metricStyle = cliArg(payload, "metric-style") ?? "pytrec";
+  if (metricStyle !== "pytrec") failures.push("TS hybrid evaluator metric-style must be pytrec");
+  const topLevelScorers = scorerListFrom(cliArg(payload, "scorers"));
+  const missingTopLevelScorers = listMissing(expectedScorers, topLevelScorers);
+  if (missingTopLevelScorers.length > 0) failures.push(`TS hybrid scorer filter missing: ${missingTopLevelScorers.join(",")}`);
+
+  const datasetInputs = Array.isArray(payload.datasetInputs) ? payload.datasetInputs : [];
+  const presentDatasets = datasetInputs.map((entry) => String(entry?.dataset ?? ""));
+  const missingDatasets = listMissing(expectedDatasets, presentDatasets);
+  if (missingDatasets.length > 0) failures.push(`TS hybrid manifest missing datasets: ${missingDatasets.join(",")}`);
+
+  for (const entry of datasetInputs) {
+    const dataset = String(entry?.dataset ?? "unknown");
+    if (!fileRecordOk(entry?.files?.qrels)) failures.push(`${dataset} qrels file is not manifest-backed`);
+    const exportManifest = entry?.exportManifest;
+    if (exportManifest === null || typeof exportManifest !== "object") {
+      failures.push(`${dataset} missing export manifest snapshot`);
+    } else {
+      if (exportManifest.tokenizer === undefined) failures.push(`${dataset} missing tokenizer snapshot`);
+      if (exportManifest.split === undefined) failures.push(`${dataset} missing split snapshot`);
+      const embedding = exportManifest.embedding;
+      if (embedding === null || typeof embedding !== "object") {
+        failures.push(`${dataset} missing embedding/cache snapshot`);
+      } else if (!Object.prototype.hasOwnProperty.call(embedding, "cacheDir")) {
+        failures.push(`${dataset} missing embedding cache snapshot`);
+      }
+    }
+
+    const options = entry?.resultSummary?.options;
+    if (options?.bm25Method !== "lucene") failures.push(`${dataset} result bm25Method must be lucene`);
+    if (Number(options?.candidateDepth) !== candidateDepth) failures.push(`${dataset} result candidateDepth does not match CLI`);
+    if ((options?.metricStyle ?? "pytrec") !== "pytrec") failures.push(`${dataset} result evaluator metricStyle must be pytrec`);
+    const resultScorers = scorerListFrom(options?.scorers);
+    const missingScorers = listMissing(expectedScorers, resultScorers);
+    if (missingScorers.length > 0) failures.push(`${dataset} result scorer filter missing: ${missingScorers.join(",")}`);
+  }
+
+  return protocolResult(failures, "TS hybrid protocol manifest valid");
+}
+
+function pytrecProtocolCheck(payload, expectedDatasets) {
+  const failures = protocolVersionFailures(payload, "pytrec");
+  if (payload.kind !== "bb25-pytrec-eval") failures.push("pytrec manifest kind is not bb25-pytrec-eval");
+  if (payload.environment?.pytrecEvalVersion === undefined) failures.push("missing pytrec_eval version provenance");
+  const inputDatasets = Array.isArray(payload.inputs?.datasets) ? payload.inputs.datasets.map(String) : [];
+  const missingInputs = listMissing(expectedDatasets, inputDatasets);
+  if (missingInputs.length > 0) failures.push(`pytrec inputs missing datasets: ${missingInputs.join(",")}`);
+
+  const datasetInputs = Array.isArray(payload.datasetInputs) ? payload.datasetInputs : [];
+  for (const entry of datasetInputs) {
+    const dataset = String(entry?.dataset ?? "unknown");
+    if (!fileRecordOk(entry?.qrels)) failures.push(`${dataset} pytrec qrels file is not manifest-backed`);
+    const runFiles = Array.isArray(entry?.runFiles) ? entry.runFiles : [];
+    if (runFiles.length === 0 || runFiles.some((file) => !fileRecordOk(file))) {
+      failures.push(`${dataset} pytrec run files are not manifest-backed`);
+    }
+  }
+
+  return protocolResult(failures, "pytrec evaluator protocol manifest valid");
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const repoRoot = resolve(".");
@@ -239,6 +454,10 @@ function main() {
   const profiles = parseProfiles(args.profile);
   const datasets = parseCsv(args.datasets ?? "arguana,fiqa,nfcorpus,scidocs,scifact");
   const sparseDatasets = parseCsv(args["sparse-datasets"] ?? "nfcorpus,scifact");
+  const datasetTolerance = Number(args["dataset-tolerance"] ?? args["dataset-tolerance-points"] ?? "0.50");
+  if (!Number.isFinite(datasetTolerance) || datasetTolerance < 0) {
+    throw new Error(`invalid dataset tolerance: ${datasetTolerance}`);
+  }
   const warnOnly = args["warn-only"] !== undefined;
   const required = unique([
     ...(profiles.includes("hybrid") ? HYBRID_REQUIRED : []),
@@ -265,11 +484,22 @@ function main() {
 
   if (profiles.includes("hybrid")) {
     addJsonCheck("manifests/beir-jsonl-hybrid-export.json", (payload) => datasetCoverageCheck(payload, datasets), "hybrid export dataset coverage");
+    addJsonCheck("manifests/beir-jsonl-hybrid-export.json", (payload) => hybridExportProtocolCheck(payload, datasets), "hybrid export protocol provenance");
     addJsonCheck("manifests/ts-hybrid-beir-internal.json", commandManifestCheck, "TS internal command manifest valid");
+    addJsonCheck("manifests/ts-hybrid-beir-internal.json", (payload) => tsHybridProtocolCheck(payload, datasets), "TS hybrid protocol manifest valid");
     addJsonCheck("manifests/ts-hybrid-beir-pytrec.json", (payload) => datasetCoverageCheck(payload.inputs ?? payload, datasets), "pytrec manifest dataset coverage");
     addJsonCheck("manifests/ts-hybrid-beir-pytrec.json", commandManifestCheck, "pytrec command manifest valid");
+    addJsonCheck("manifests/ts-hybrid-beir-pytrec.json", (payload) => pytrecProtocolCheck(payload, datasets), "pytrec protocol manifest valid");
     addJsonCheck("manifests/baseline-parity-runner.json", commandManifestCheck, "baseline runner commands valid");
     addJsonCheck("ts/baseline-parity.json", parityCheck, "baseline parity result valid");
+  }
+
+  if (profiles.includes("hybrid-strict")) {
+    addJsonCheck(
+      "ts/baseline-parity.json",
+      (payload) => datasetParityCheck(payload, datasets, datasetTolerance),
+      "baseline dataset-level parity valid",
+    );
   }
 
   if (profiles.includes("sparse")) {
@@ -291,6 +521,7 @@ function main() {
     profiles,
     datasets,
     sparseDatasets,
+    datasetTolerance,
     passed: failed.length === 0,
     summary: {
       checks: checks.length,
